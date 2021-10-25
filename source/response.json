@@ -1,0 +1,9 @@
+{
+	"product": "test",
+	"requestId": "{BC6B8989-DAB7-484E-9AD3-F7C34A800A1A}",
+	"client": {
+				"balance": 109240.59,
+				"minDate": "2020-01-01T00:00:00.007Z",
+				"maxDate": "2020-11-10T06:47:04.462Z"
+			}
+}
