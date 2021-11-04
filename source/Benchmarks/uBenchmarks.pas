@@ -41,7 +41,10 @@ type
 
   TBenchmark = class
   protected
-
+    FClientClass: TBenchmarkClientClass;
+    FClientCount: Integer;
+    FWorkMode: Boolean;
+    FClients: TArray<TBenchmarkClient>;
   public
     const
       CLIENT_PORT = 1234;
@@ -70,9 +73,18 @@ type
     class procedure InternalLoadJson(const AFileName: string; out AStr: string;
       out AUtf8: UTF8String; out ABytes: TBytes; out ALength: Integer);
   public
+    constructor Create(const AClientClass: TBenchmarkClientClass; const AClientCount: Integer; const AWorkMode: Boolean); virtual;
+    destructor Destroy; override;
+
+    property ClientClass: TBenchmarkClientClass read FClientClass;
+    property WorkMode: Boolean read FWorkMode;
+  public
     class procedure Run(const AClientClass: TBenchmarkClientClass; const AServerPaths: array of string); virtual;
   end;
 
+
+var
+  Benchmark: TBenchmark;
 
 implementation
 
@@ -112,7 +124,7 @@ begin
   if AWorkMode then
     BenchmarkInitWork
   else
-   BenchmarkInitBlank;
+    BenchmarkInitBlank;
 end;
 
 class procedure TBenchmarkClient.BenchmarkInitBlank;
@@ -159,6 +171,19 @@ class destructor TBenchmark.ClassDestroy;
 begin
 end;
 
+constructor TBenchmark.Create(const AClientClass: TBenchmarkClientClass; const AWorkMode: Boolean);
+begin
+  inherited Create;
+  FClientClass := AClientClass;
+  FWorkMode := AWorkMode;
+  FClientClass.BenchmarkInit(FWorkMode);
+end;
+
+destructor TBenchmark.Destroy;
+begin
+  inherited;
+end;
+
 class procedure TBenchmark.InternalLoadJson(const AFileName: string;
   out AStr: string; out AUtf8: UTF8String; out ABytes: TBytes;
   out ALength: Integer);
@@ -185,8 +210,46 @@ end;
 
 class procedure TBenchmark.Run(const AClientClass: TBenchmarkClientClass;
   const AServerPaths: array of string);
+const
+  CLIENT_COUNTS: array of Integer = [1, 100, 10000];
+  WORK_MODES: array of Boolean = [False, True];
+var
+  LServerPath: string;
+  LClientCount: Integer;
+  LWorkMode: Boolean;
 begin
-  Writeln(AClientClass.UnitName, ' running...');
+  Writeln(StringReplace(AClientClass.UnitName, 'benckmark.', '', [rfReplaceAll, rfIgnoreCase]),
+    ' Server benchmark running...');
+
+  for LServerPath in AServerPaths do
+  begin
+    Writeln;
+
+    try
+      for LClientCount in CLIENT_COUNTS do
+      for LWorkMode in WORK_MODES do
+      begin
+
+
+
+        Benchmark := TBenchmark.Create(AClientClass, LClientCount, LWorkMode);
+        try
+
+        finally
+          FreeAndNil(Benchmark);
+        end;
+      end;
+    except
+      on E: Exception do
+        Writeln(E.ClassName, ': ', E.Message);
+    end;
+  end;
+
+//  LClientCounts := [1, 100, 10000];
+//  LWorkModes := [False, True];
+
+
+//  Benchmark: TBenchmark;
 
   Write('Press Enter to quit');
   Readln;
