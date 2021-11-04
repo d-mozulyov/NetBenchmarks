@@ -64,7 +64,13 @@ module.exports = {
 
     run: async function (clientClass, serverPath, clientCount, workMode) {
         // log
-        var serverName = serverPath.replace("node source/Node.js/", "").replace(".js", "");
+        var serverName = serverPath.replace(".js", "");
+        while (true) {
+            let index = serverName.indexOf("/");
+            if (index < 0)
+                break;
+            serverName = serverName.substring(index + 1);
+        }
         process.stdout.write(util.format("%s %d conn %s... ", serverName, clientCount, workMode?"work":"blank"));
 
         try {

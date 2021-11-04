@@ -139,11 +139,11 @@ class HttpClient extends benchmarks.Client {
 
 
 benchmarks.main(HttpClient, [
-    "Indy.HTTP",
-    "IndyPool.HTTP",
-    "RealThinClient.HTTP",
-    "Synopse.HTTP",
-    "TMSSparkle.HTTP",
+    "bin/HTTP/Indy.HTTP",
+    "bin/HTTP/IndyPool.HTTP",
+    "bin/HTTP/RealThinClient.HTTP",
+    "bin/HTTP/Synopse.HTTP",
+    "bin/HTTP/TMSSparkle.HTTP",
     "node source/Node.js/Node.HTTP.js",
-    "Golang.HTTP"
+    "bin/HTTP/Golang.HTTP"
 ]);

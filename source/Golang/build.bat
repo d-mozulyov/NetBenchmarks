@@ -1,3 +1,3 @@
 
-go build -o "../../Golang.HTTP.exe" "Golang.HTTP.go"
+go build -o "../../bin/HTTP/Golang.HTTP.exe" "Golang.HTTP.go"
 pause
