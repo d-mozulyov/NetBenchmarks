@@ -24,12 +24,13 @@ type
     class procedure BenchmarkInitBlank; virtual;
     class procedure BenchmarkInitWork; virtual;
 
-
   public
     constructor Create(const AWorkMode: Boolean); virtual;
     destructor Destroy; override;
     procedure Init; virtual;
-    procedure Stop; virtual;
+    procedure Final; virtual;
+    procedure Check; virtual;
+    procedure Run; virtual;
 
     property WorkMode: Boolean read FWorkMode;
   end;
@@ -44,6 +45,7 @@ type
     FClientClass: TBenchmarkClientClass;
     FClientCount: Integer;
     FWorkMode: Boolean;
+    FAlign: array[1..SizeOf(Integer) - SizeOf(Boolean)] of Byte;
     FClients: TArray<TBenchmarkClient>;
   public
     const
@@ -67,6 +69,8 @@ type
       WORK_RESPONSE_UTF8: UTF8String;
       WORK_RESPONSE_BYTES: TBytes;
       WORK_RESPONSE_LENGHT: Integer;
+    class var
+      Instance: TBenchmark;
 
     class constructor ClassCreate;
     class destructor ClassDestroy;
@@ -75,16 +79,20 @@ type
   public
     constructor Create(const AClientClass: TBenchmarkClientClass; const AClientCount: Integer; const AWorkMode: Boolean); virtual;
     destructor Destroy; override;
+    procedure Run; overload;
+    class procedure Run(const AClientClass: TBenchmarkClientClass; const AServerPaths: array of string); overload;
 
     property ClientClass: TBenchmarkClientClass read FClientClass;
+    property ClientCount: Integer read FClientCount;
     property WorkMode: Boolean read FWorkMode;
+    property Clients: TArray<TBenchmarkClient> read FClients;
   public
-    class procedure Run(const AClientClass: TBenchmarkClientClass; const AServerPaths: array of string); virtual;
+    const
+      TIMEOUT_SEC = {$ifdef DEBUG}2{$else}10{$endif};
+    var
+      RequestCount: Integer;
+      ResponseCount: Integer;
   end;
-
-
-var
-  Benchmark: TBenchmark;
 
 implementation
 
@@ -144,7 +152,7 @@ end;
 
 destructor TBenchmarkClient.Destroy;
 begin
-  Stop;
+  Final;
   inherited;
 end;
 
@@ -152,8 +160,18 @@ procedure TBenchmarkClient.Init;
 begin
 end;
 
-procedure TBenchmarkClient.Stop;
+procedure TBenchmarkClient.Final;
 begin
+end;
+
+procedure TBenchmarkClient.Check;
+begin
+
+end;
+
+procedure TBenchmarkClient.Run;
+begin
+
 end;
 
 
@@ -169,19 +187,6 @@ end;
 
 class destructor TBenchmark.ClassDestroy;
 begin
-end;
-
-constructor TBenchmark.Create(const AClientClass: TBenchmarkClientClass; const AWorkMode: Boolean);
-begin
-  inherited Create;
-  FClientClass := AClientClass;
-  FWorkMode := AWorkMode;
-  FClientClass.BenchmarkInit(FWorkMode);
-end;
-
-destructor TBenchmark.Destroy;
-begin
-  inherited;
 end;
 
 class procedure TBenchmark.InternalLoadJson(const AFileName: string;
@@ -208,15 +213,63 @@ begin
   end;
 end;
 
+constructor TBenchmark.Create(const AClientClass: TBenchmarkClientClass;
+  const AClientCount: Integer; const AWorkMode: Boolean);
+var
+  i: Integer;
+begin
+  inherited Create;
+  FClientClass := AClientClass;
+  FClientCount := AClientCount;
+  FWorkMode := AWorkMode;
+  FClientClass.BenchmarkInit(FWorkMode);
+
+  SetLength(FClients, AClientCount);
+  FillChar(Pointer(FClients)^, AClientCount * SizeOf(Pointer), #0);
+  for i := Low(FClients) to High(FClients) do
+    FClients[i] := AClientClass.Create(AWorkMode);
+end;
+
+destructor TBenchmark.Destroy;
+var
+  i: Integer;
+begin
+  for i := Low(FClients) to High(FClients) do
+    FClients[i].Free;
+
+  inherited;
+end;
+
+procedure TBenchmark.Run;
+var
+  i: Integer;
+begin
+  // initialization
+  RequestCount := 0;
+  ResponseCount := 0;
+  for i := Low(FClients) to High(FClients) do
+    FClients[i].Init;
+
+  // running
+  // ToDo
+
+  // finalization
+  for i := Low(FClients) to High(FClients) do
+    FClients[i].Final;
+end;
+
 class procedure TBenchmark.Run(const AClientClass: TBenchmarkClientClass;
   const AServerPaths: array of string);
 const
   CLIENT_COUNTS: array of Integer = [1, 100, 10000];
   WORK_MODES: array of Boolean = [False, True];
+  WORK_MODE_STRS: array[Boolean] of string = ('blank', 'work');
 var
+  P: Integer;
   LServerPath: string;
   LClientCount: Integer;
   LWorkMode: Boolean;
+  LServerName: string;
 begin
   Writeln(StringReplace(AClientClass.UnitName, 'benckmark.', '', [rfReplaceAll, rfIgnoreCase]),
     ' Server benchmark running...');
@@ -229,14 +282,33 @@ begin
       for LClientCount in CLIENT_COUNTS do
       for LWorkMode in WORK_MODES do
       begin
+        LServerName := StringReplace(LServerPath, '.js', '', [rfReplaceAll]);
+        repeat
+          P := Pos('/', LServerName);
+          if (P = 0) then
+            Break;
 
+          Delete(LServerName, 1, P);
+        until (False);
+        Write(Format('%s %d con %s... ', [LServerName, LClientCount, WORK_MODE_STRS[LWorkMode]]));
 
+        {ToDo запуск сервера}
 
-        Benchmark := TBenchmark.Create(AClientClass, LClientCount, LWorkMode);
         try
+          Sleep({$ifdef DEBUG}500{$else}1000{$endif});
 
+          TBenchmark.Instance := Self.Create(AClientClass, LClientCount, LWorkMode);
+          try
+            TBenchmark.Instance.Run;
+            Writeln(Format('requests: %d, responses: %d, throughput: %d/sec', [
+              TBenchmark.Instance.RequestCount, TBenchmark.Instance.ResponseCount,
+              Round(TBenchmark.Instance.ResponseCount / TBenchmark.Instance.TIMEOUT_SEC)
+            ]));
+          finally
+            FreeAndNil(TBenchmark.Instance);
+          end;
         finally
-          FreeAndNil(Benchmark);
+          {ToDo остановить сервер}
         end;
       end;
     except
@@ -245,14 +317,10 @@ begin
     end;
   end;
 
-//  LClientCounts := [1, 100, 10000];
-//  LWorkModes := [False, True];
-
-
-//  Benchmark: TBenchmark;
-
+  {$ifdef DEBUG}
   Write('Press Enter to quit');
   Readln;
+  {$endif}
 end;
 
 initialization

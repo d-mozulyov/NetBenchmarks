@@ -17,7 +17,7 @@ type
     class procedure BenchmarkInitWork; override;
   public
     procedure Init; override;
-    procedure Stop; override;
+    procedure Final; override;
 
     property Connection: ICrossConnection read FConnection;
   end;
@@ -38,13 +38,19 @@ begin
  // FConnection := TCrossConnection.Create(nil, );
 end;
 
-procedure TTCPClient.Stop;
+procedure TTCPClient.Final;
 begin
   FConnection := nil;
 end;
 
 begin
   TBenchmark.Run(TTCPClient, [
-    ''
+    'bin/HTTP/Indy.HTTP',
+    'bin/HTTP/IndyPool.HTTP',
+    'bin/HTTP/RealThinClient.HTTP',
+    'bin/HTTP/Synopse.HTTP',
+    'bin/HTTP/TMSSparkle.HTTP',
+    'node source/Node.js/Node.HTTP.js',
+    'bin/HTTP/Golang.HTTP'
   ]);
 end.
