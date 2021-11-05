@@ -14,39 +14,22 @@ uses
 
 type
 
-{ TBenchmarkClient class }
-
-  TBenchmarkClient = class(TObject)
-  private
-    FWorkMode: Boolean;
-  protected
-    class procedure BenchmarkInit(const AWorkMode: Boolean); virtual;
-    class procedure BenchmarkInitBlank; virtual;
-    class procedure BenchmarkInitWork; virtual;
-
-  public
-    constructor Create(const AWorkMode: Boolean); virtual;
-    destructor Destroy; override;
-    procedure Init; virtual;
-    procedure Final; virtual;
-    procedure Check; virtual;
-    procedure Run; virtual;
-
-    property WorkMode: Boolean read FWorkMode;
-  end;
-
-  TBenchmarkClientClass = class of TBenchmarkClient;
+(*
+    Типичная картина наиболее сложного протокола: UDPx2
 
 
-{ TBenchmark class }
 
-  TBenchmark = class
-  protected
-    FClientClass: TBenchmarkClientClass;
-    FClientCount: Integer;
-    FWorkMode: Boolean;
-    FAlign: array[1..SizeOf(Integer) - SizeOf(Boolean)] of Byte;
-    FClients: TArray<TBenchmarkClient>;
+
+
+*)
+
+  TClient = class;
+  TClientClass = class of TClient;
+
+
+{ TBenchmark singleton }
+
+  TBenchmark = record
   public
     const
       CLIENT_PORT = 1234;
@@ -69,30 +52,48 @@ type
       WORK_RESPONSE_UTF8: UTF8String;
       WORK_RESPONSE_BYTES: TBytes;
       WORK_RESPONSE_LENGHT: Integer;
+    const
+      TIMEOUT_SEC = {$ifdef DEBUG}2{$else}10{$endif};
     class var
-      Instance: TBenchmark;
+      ClientCount: Integer;
+      Clients: TArray<TClient>;
+      RequestCount: Integer;
+      ResponseCount: Integer;
+      Error: PChar;
+      Terminated: Boolean;
 
+  private
     class constructor ClassCreate;
     class destructor ClassDestroy;
     class procedure InternalLoadJson(const AFileName: string; out AStr: string;
-      out AUtf8: UTF8String; out ABytes: TBytes; out ALength: Integer);
+      out AUtf8: UTF8String; out ABytes: TBytes; out ALength: Integer); static;
+    class procedure InternalRun(const AClientClass: TClientClass;
+      const AClientCount: Integer; const AWorkMode, ACheckMode: Boolean); static;
   public
-    constructor Create(const AClientClass: TBenchmarkClientClass; const AClientCount: Integer; const AWorkMode: Boolean); virtual;
-    destructor Destroy; override;
-    procedure Run; overload;
-    class procedure Run(const AClientClass: TBenchmarkClientClass; const AServerPaths: array of string); overload;
-
-    property ClientClass: TBenchmarkClientClass read FClientClass;
-    property ClientCount: Integer read FClientCount;
-    property WorkMode: Boolean read FWorkMode;
-    property Clients: TArray<TBenchmarkClient> read FClients;
-  public
-    const
-      TIMEOUT_SEC = {$ifdef DEBUG}2{$else}10{$endif};
-    var
-      RequestCount: Integer;
-      ResponseCount: Integer;
+    class procedure Run(const AClientClass: TClientClass; const AServerPaths: array of string); static;
   end;
+
+
+{ TClient class }
+
+  TClient = class(TObject)
+  private
+    FIndex: Integer;
+    FWorkMode: Boolean;
+    FCheckMode: Boolean;
+  protected
+    class procedure BenchmarkInit(const AClientCount: Integer; const AWorkMode: Boolean); virtual;
+    procedure DoRun; virtual; abstract;
+  public
+    constructor Create(const AIndex: Integer; const AWorkMode, ACheckMode: Boolean); virtual;
+    procedure Run; inline;
+    procedure Done(const AError: PWideChar = nil);
+
+    property Index: Integer read FIndex;
+    property WorkMode: Boolean read FWorkMode;
+    property CheckMode: Boolean read FCheckMode;
+  end;
+
 
 implementation
 
@@ -123,56 +124,6 @@ procedure InitKeyHandler;
 begin
 end;
 {$endif}
-
-
-{ TBenchmarkClient }
-
-class procedure TBenchmarkClient.BenchmarkInit(const AWorkMode: Boolean);
-begin
-  if AWorkMode then
-    BenchmarkInitWork
-  else
-    BenchmarkInitBlank;
-end;
-
-class procedure TBenchmarkClient.BenchmarkInitBlank;
-begin
-end;
-
-class procedure TBenchmarkClient.BenchmarkInitWork;
-begin
-end;
-
-constructor TBenchmarkClient.Create(const AWorkMode: Boolean);
-begin
-  inherited Create;
-  FWorkMode := AWorkMode;
-  Init;
-end;
-
-destructor TBenchmarkClient.Destroy;
-begin
-  Final;
-  inherited;
-end;
-
-procedure TBenchmarkClient.Init;
-begin
-end;
-
-procedure TBenchmarkClient.Final;
-begin
-end;
-
-procedure TBenchmarkClient.Check;
-begin
-
-end;
-
-procedure TBenchmarkClient.Run;
-begin
-
-end;
 
 
 { TBenchmark }
@@ -213,52 +164,31 @@ begin
   end;
 end;
 
-constructor TBenchmark.Create(const AClientClass: TBenchmarkClientClass;
-  const AClientCount: Integer; const AWorkMode: Boolean);
+class procedure TBenchmark.InternalRun(const AClientClass: TClientClass;
+  const AClientCount: Integer; const AWorkMode, ACheckMode: Boolean);
 var
   i: Integer;
 begin
-  inherited Create;
-  FClientClass := AClientClass;
-  FClientCount := AClientCount;
-  FWorkMode := AWorkMode;
-  FClientClass.BenchmarkInit(FWorkMode);
+  // create clients
+  ClientCount := AClientCount;
+  SetLength(Clients, ClientCount);
+  for i := 0 to ClientCount - 1 do
+    Clients[i] := AClientClass.Create(i, AWorkMode, ACheckMode);
 
-  SetLength(FClients, AClientCount);
-  FillChar(Pointer(FClients)^, AClientCount * SizeOf(Pointer), #0);
-  for i := Low(FClients) to High(FClients) do
-    FClients[i] := AClientClass.Create(AWorkMode);
+  try
+
+
+
+  finally
+    // destroy clients
+    for i := Low(Clients) to High(Clients) do
+      Clients[i].Free;
+
+
+  end;
 end;
 
-destructor TBenchmark.Destroy;
-var
-  i: Integer;
-begin
-  for i := Low(FClients) to High(FClients) do
-    FClients[i].Free;
-
-  inherited;
-end;
-
-procedure TBenchmark.Run;
-var
-  i: Integer;
-begin
-  // initialization
-  RequestCount := 0;
-  ResponseCount := 0;
-  for i := Low(FClients) to High(FClients) do
-    FClients[i].Init;
-
-  // running
-  // ToDo
-
-  // finalization
-  for i := Low(FClients) to High(FClients) do
-    FClients[i].Final;
-end;
-
-class procedure TBenchmark.Run(const AClientClass: TBenchmarkClientClass;
+class procedure TBenchmark.Run(const AClientClass: TClientClass;
   const AServerPaths: array of string);
 const
   CLIENT_COUNTS: array of Integer = [1, 100, 10000];
@@ -297,16 +227,21 @@ begin
         try
           Sleep({$ifdef DEBUG}500{$else}1000{$endif});
 
-          TBenchmark.Instance := Self.Create(AClientClass, LClientCount, LWorkMode);
-          try
-            TBenchmark.Instance.Run;
-            Writeln(Format('requests: %d, responses: %d, throughput: %d/sec', [
-              TBenchmark.Instance.RequestCount, TBenchmark.Instance.ResponseCount,
-              Round(TBenchmark.Instance.ResponseCount / TBenchmark.Instance.TIMEOUT_SEC)
+          // initialization
+          AClientClass.BenchmarkInit(LClientCount, LWorkMode);
+
+          // check
+          TBenchmark.Error := nil;
+          TBenchmark.InternalRun(AClientClass, 1, LWorkMode, True);
+          if Assigned(TBenchmark.Error) then
+            raise Exception.CreateFmt('%s', [TBenchmark.Error]);
+
+          // run benchmark
+          TBenchmark.InternalRun(AClientClass, LClientCount, LWorkMode, False);
+          Writeln(Format('requests: %d, responses: %d, throughput: %d/sec', [
+              TBenchmark.RequestCount, TBenchmark.ResponseCount,
+              Round(TBenchmark.ResponseCount / TBenchmark.TIMEOUT_SEC)
             ]));
-          finally
-            FreeAndNil(TBenchmark.Instance);
-          end;
         finally
           {ToDo остановить сервер}
         end;
@@ -322,6 +257,46 @@ begin
   Readln;
   {$endif}
 end;
+
+
+{ TClient }
+
+class procedure TClient.BenchmarkInit(const AClientCount: Integer; const AWorkMode: Boolean);
+begin
+end;
+
+constructor TClient.Create(const AIndex: Integer; const AWorkMode, ACheckMode: Boolean);
+begin
+  inherited Create;
+  FIndex := AIndex;
+  FWorkMode := AWorkMode;
+  FCheckMode := ACheckMode;
+end;
+
+procedure TClient.Run;
+begin
+  if (not TBenchmark.Terminated) then
+  begin
+    AtomicIncrement(TBenchmark.RequestCount);
+    DoRun;
+  end;
+end;
+
+procedure TClient.Done(const AError: PWideChar);
+begin
+  if Assigned(AError) then
+  begin
+    if CheckMode then
+      TBenchmark.Error := AError;
+  end else
+  if (not TBenchmark.Terminated) then
+  begin
+    AtomicIncrement(TBenchmark.ResponseCount);
+  end;
+
+  // ToDo
+end;
+
 
 initialization
   InitKeyHandler;

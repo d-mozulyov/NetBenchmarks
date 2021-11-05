@@ -9,15 +9,12 @@ uses
   Net.CrossSocket;
 
 type
-  TTCPClient = class(TBenchmarkClient)
+  TTCPClient = class(TClient)
   protected
     FConnection: ICrossConnection;
 
-    class procedure BenchmarkInitBlank; override;
-    class procedure BenchmarkInitWork; override;
+    class procedure BenchmarkInit(const AClientCount: Integer; const AWorkMode: Boolean); override;
   public
-    procedure Init; override;
-    procedure Final; override;
 
     property Connection: ICrossConnection read FConnection;
   end;
@@ -25,23 +22,11 @@ type
 
 { TTCPClient }
 
-class procedure TTCPClient.BenchmarkInitBlank;
+class procedure TTCPClient.BenchmarkInit(const AClientCount: Integer; const AWorkMode: Boolean);
 begin
 end;
 
-class procedure TTCPClient.BenchmarkInitWork;
-begin
-end;
 
-procedure TTCPClient.Init;
-begin
- // FConnection := TCrossConnection.Create(nil, );
-end;
-
-procedure TTCPClient.Final;
-begin
-  FConnection := nil;
-end;
 
 begin
   TBenchmark.Run(TTCPClient, [
