@@ -27,6 +27,21 @@ type
   TClientClass = class of TClient;
 
 
+{ TClientStack }
+
+  PClientStack = ^TClientStack;
+  TClientStack = packed record
+    Head: TClient;
+    Counter: NativeInt;
+
+    function CmpExchange(const AItem, ANewItem: TClientStack): Boolean; inline;
+    procedure PushList(const AFirst, ALast: TClient);
+    procedure Push(const AClient: TClient); inline;
+    function Pop: TClient;
+    function PopAll: TClient;
+  end;
+
+
 { TBenchmark singleton }
 
   TBenchmark = record
@@ -78,6 +93,7 @@ type
 
   TClient = class(TObject)
   private
+    FStackNext: TClient;
     FIndex: Integer;
     FWorkMode: Boolean;
     FCheckMode: Boolean;
@@ -124,6 +140,73 @@ procedure InitKeyHandler;
 begin
 end;
 {$endif}
+
+
+{ TClientStack }
+
+function TClientStack.CmpExchange(const AItem, ANewItem: TClientStack): Boolean;
+begin
+  {$if not Defined(CPUX64) and not Defined(CPUARM64)}
+    Result := Int64(AItem) = AtomicCmpExchange(PInt64(@Self)^, Int64(ANewItem), Int64(AItem));
+  {$elseif Defined(MSWINDOWS)}
+    Result := InterlockedCompareExchange128(@Self, ANewItem.Counter, Int64(ANewItem.Head), @AItem);
+  {$else}
+    {$MESSAGE ERROR 'Platform not yet supported'}
+  {$endif}
+end;
+
+procedure TClientStack.PushList(const AFirst, ALast: TClient);
+var
+  LItem, LNewItem: TClientStack;
+begin
+  repeat
+    LItem := Self;
+    LNewItem.Head := AFirst;
+    LNewItem.Counter := LItem.Counter + 1;
+    ALast.FStackNext := LItem.Head;
+  until CmpExchange(LItem, LNewItem);
+end;
+
+procedure TClientStack.Push(const AClient: TClient);
+begin
+  PushList(AClient, AClient);
+end;
+
+function TClientStack.Pop: TClient;
+var
+  LItem, LNewItem: TClientStack;
+begin
+  repeat
+    Result := Self.Head;
+    if not Assigned(Result) then
+      Exit;
+
+    LItem.Head := Result;
+    LItem.Counter := Self.Counter;
+    LNewItem.Head := Result.FStackNext;
+    LNewItem.Counter := LItem.Counter + 1;
+  until CmpExchange(LItem, LNewItem);
+
+  Result := LItem.Head;
+end;
+
+function TClientStack.PopAll: TClient;
+var
+  LItem, LNewItem: TClientStack;
+begin
+  repeat
+    Result := Self.Head;
+    if not Assigned(Result) then
+      Exit;
+
+    LItem.Head := Result;
+    LItem.Counter := Self.Counter;
+    LNewItem.Head := nil;
+    LNewItem.Counter := LItem.Counter + 1;
+  until CmpExchange(LItem, LNewItem);
+
+  Result := LItem.Head;
+end;
 
 
 { TBenchmark }
