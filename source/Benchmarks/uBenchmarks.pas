@@ -8,6 +8,7 @@ uses
   {$endif}
   System.SysUtils,
   System.Classes,
+  System.Diagnostics,
   System.IOUtils,
   System.Generics.Collections,
   System.JSON;
@@ -19,10 +20,12 @@ type
 
     Приложение запускается, первым аргументтом будет путь до приложения
     Если аргумент не указан - берётся дефолтный сервер: Indy или Node.js (для Pipe)
-
     Далее принимается аргумент количество соединений. Если не указано: 1, 100 и 10000
-
     Далее - вариант рабочей нагрузки. По умолчанию: False, True
+
+    Засекается время
+    На протяжении определённого времени происходит обработка сообщений
+
 *)
 
   TClient = class;
@@ -82,11 +85,13 @@ type
       WORK_RESPONSE_UTF8: UTF8String;
       WORK_RESPONSE_BYTES: TBytes;
       WORK_RESPONSE_LENGHT: Integer;
+      CLIENT_STACK_BUFFER: array[0..64 * 2 - 1] of Byte;
     const
       TIMEOUT_SEC = {$ifdef DEBUG}2{$else}10{$endif};
     class var
       ClientCount: Integer;
       Clients: TArray<TClient>;
+      ClientStack: PClientStack;
       RequestCount: Integer;
       ResponseCount: Integer;
       Error: PChar;
@@ -114,7 +119,9 @@ type
     FCheckMode: Boolean;
   protected
     class procedure BenchmarkInit(const AClientCount: Integer; const AWorkMode: Boolean); virtual;
+    class procedure BenchmarkFinal(const AClientCount: Integer; const AWorkMode: Boolean); virtual;
     procedure DoRun; virtual; abstract;
+    procedure DoInit; virtual; abstract;
   public
     constructor Create(const AIndex: Integer; const AWorkMode, ACheckMode: Boolean); virtual;
     procedure Run; inline;
@@ -251,10 +258,13 @@ end;
 class constructor TBenchmark.ClassCreate;
 begin
   SetCurrentDir(ExtractFileDir(ParamStr(0)));
+
   InternalLoadJson('request.json', WORK_REQUEST, WORK_REQUEST_UTF8,
     WORK_REQUEST_BYTES, WORK_REQUEST_LENGHT);
   InternalLoadJson('response.json', WORK_RESPONSE, WORK_RESPONSE_UTF8,
     WORK_RESPONSE_BYTES, WORK_RESPONSE_LENGHT);
+
+  ClientStack := PClientStack(NativeInt(@CLIENT_STACK_BUFFER[64]) and -64);
 end;
 
 class destructor TBenchmark.ClassDestroy;
@@ -289,23 +299,85 @@ class procedure TBenchmark.InternalRun(const AClientClass: TClientClass;
   const AClientCount: Integer; const AWorkMode, ACheckMode: Boolean);
 var
   i: Integer;
+  LSyncYield: TSyncYield;
+  LStopwatch: TStopwatch;
+  LCurrentClient, LNextClient: TClient;
 begin
-  // create clients
-  ClientCount := AClientCount;
-  SetLength(Clients, ClientCount);
-  for i := 0 to ClientCount - 1 do
-    Clients[i] := AClientClass.Create(i, AWorkMode, ACheckMode);
-
+  AClientClass.BenchmarkInit(AClientCount, AWorkMode);
   try
+    // create clients
+    ClientCount := AClientCount;
+    SetLength(Clients, ClientCount);
+    FillChar(Pointer(Clients)^, ClientCount * SizeOf(Pointer), #0);
+    for i := 0 to ClientCount - 1 do
+      Clients[i] := AClientClass.Create(i, AWorkMode, ACheckMode);
 
+    // initialize clients
+    ClientStack.Head := Clients[0];
+    ClientStack.Counter := 0;
+    for i := 0 to ClientCount - 1 do
+    begin
+      if (i <> ClientCount - 1) then
+      begin
+        Clients[i].FStackNext := Clients[i + 1];
+      end;
+      Clients[i].DoInit;
+    end;
 
+    // process loop
+    RequestCount := 0;
+    ResponseCount := 0;
+    Error := nil;
+    Terminated := False;
+    LSyncYield.Reset;
+    LStopwatch := TStopwatch.StartNew;
+    while (not Terminated) do
+    begin
+      // алгоритм с проверкой таймаутов 5мск?
+      // ToDo
+
+      // running clients
+      LNextClient := ClientStack.PopAll;
+      if Assigned(LNextClient) then
+      begin
+        LSyncYield.Reset;
+
+        repeat
+          LCurrentClient := LNextClient;
+          LNextClient := LCurrentClient.FStackNext;
+          LCurrentClient.FStackNext := nil;
+
+          LCurrentClient.Run;
+        until Assigned(LNextClient);
+      end else
+      begin
+        LSyncYield.Execute;
+      end;
+
+      // is terminated
+      if (ACheckMode) then
+      begin
+        Terminated := (ResponseCount > 0) or Assigned(Error);
+        if (not Terminated) and (LStopwatch.ElapsedMilliseconds >= (1000 * 1)) then
+        begin
+          Terminated := True;
+          Error := 'Timeout error';
+        end;
+      end else
+      begin
+        Terminated := (LStopwatch.ElapsedMilliseconds >= (1000 * TIMEOUT_SEC));
+      end;
+    end;
 
   finally
     // destroy clients
+    Terminated := True;
+    AClientClass.BenchmarkFinal(AClientCount, AWorkMode);
     for i := Low(Clients) to High(Clients) do
-      Clients[i].Free;
-
-
+    begin
+      FreeAndNil(Clients[i]);
+    end;
+    Clients := nil;
   end;
 end;
 
@@ -389,9 +461,6 @@ begin
         try
           Sleep({$ifdef DEBUG}500{$else}1000{$endif});
 
-          // initialization
-          AClientClass.BenchmarkInit(LClientCount, LWorkMode);
-
           // check
           TBenchmark.Error := nil;
           TBenchmark.InternalRun(AClientClass, 1, LWorkMode, True);
@@ -430,6 +499,10 @@ class procedure TClient.BenchmarkInit(const AClientCount: Integer; const AWorkMo
 begin
 end;
 
+class procedure TClient.BenchmarkFinal(const AClientCount: Integer; const AWorkMode: Boolean);
+begin
+end;
+
 constructor TClient.Create(const AIndex: Integer; const AWorkMode, ACheckMode: Boolean);
 begin
   inherited Create;
@@ -459,7 +532,7 @@ begin
     AtomicIncrement(TBenchmark.ResponseCount);
   end;
 
-  // ToDo
+  TBenchmark.ClientStack.Push(Self);
 end;
 
 
