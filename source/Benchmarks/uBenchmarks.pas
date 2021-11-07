@@ -27,7 +27,20 @@ type
   TClientClass = class of TClient;
 
 
-{ TClientStack }
+{ TSyncYield record }
+
+  TSyncYield = record
+  private
+    FCount: Byte;
+  public
+    procedure Reset; inline;
+    procedure Execute;
+
+    property Count: Byte read FCount write FCount;
+  end;
+
+
+{ TClientStack record }
 
   PClientStack = ^TClientStack;
   TClientStack = packed record
@@ -140,6 +153,28 @@ procedure InitKeyHandler;
 begin
 end;
 {$endif}
+
+
+{ TSyncYield }
+
+procedure TSyncYield.Reset;
+begin
+  FCount := 0;
+end;
+
+procedure TSyncYield.Execute;
+var
+  LCount: Integer;
+begin
+  LCount := FCount;
+  FCount := LCount + 1;
+  case (LCount and 7) of
+    0..4: YieldProcessor;
+    5, 6: SwitchToThread;
+  else
+    Sleep(1);
+  end;
+end;
 
 
 { TClientStack }
