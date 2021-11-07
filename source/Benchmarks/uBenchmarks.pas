@@ -17,10 +17,12 @@ type
 (*
     Типичная картина наиболее сложного протокола: UDPx2
 
+    Приложение запускается, первым аргументтом будет путь до приложения
+    Если аргумент не указан - берётся дефолтный сервер: Indy или Node.js (для Pipe)
 
+    Далее принимается аргумент количество соединений. Если не указано: 1, 100 и 10000
 
-
-
+    Далее - вариант рабочей нагрузки. По умолчанию: False, True
 *)
 
   TClient = class;
@@ -98,7 +100,7 @@ type
     class procedure InternalRun(const AClientClass: TClientClass;
       const AClientCount: Integer; const AWorkMode, ACheckMode: Boolean); static;
   public
-    class procedure Run(const AClientClass: TClientClass; const AServerPaths: array of string); static;
+    class procedure Run(const AClientClass: TClientClass); static;
   end;
 
 
@@ -248,6 +250,7 @@ end;
 
 class constructor TBenchmark.ClassCreate;
 begin
+  SetCurrentDir(ExtractFileDir(ParamStr(0)));
   InternalLoadJson('request.json', WORK_REQUEST, WORK_REQUEST_UTF8,
     WORK_REQUEST_BYTES, WORK_REQUEST_LENGHT);
   InternalLoadJson('response.json', WORK_RESPONSE, WORK_RESPONSE_UTF8,
@@ -306,29 +309,70 @@ begin
   end;
 end;
 
-class procedure TBenchmark.Run(const AClientClass: TClientClass;
-  const AServerPaths: array of string);
+class procedure TBenchmark.Run(const AClientClass: TClientClass);
 const
-  CLIENT_COUNTS: array of Integer = [1, 100, 10000];
-  WORK_MODES: array of Boolean = [False, True];
+  CLIENT_COUNTS: TArray<Integer> = [1, 100, 10000];
+  WORK_MODES: TArray<Boolean> = [False, True];
   WORK_MODE_STRS: array[Boolean] of string = ('blank', 'work');
 var
   P: Integer;
+  S: string;
+  LProtocol: string;
+  LServerPathArr: TArray<string>;
+  LClientCountArr: TArray<Integer>;
+  LWorkModeArr: TArray<Boolean>;
   LServerPath: string;
   LClientCount: Integer;
   LWorkMode: Boolean;
   LServerName: string;
 begin
-  Writeln(StringReplace(AClientClass.UnitName, 'benckmark.', '', [rfReplaceAll, rfIgnoreCase]),
-    ' Server benchmark running...');
+  // protocol
+  LProtocol := StringReplace(AClientClass.UnitName, 'benchmark.', '', [rfReplaceAll, rfIgnoreCase]);
 
-  for LServerPath in AServerPaths do
+  // parameters
+  begin
+    S := ParamStr(1);
+    if (S <> '') then
+    begin
+      LServerPathArr := [S];
+    end else
+    if (LProtocol = 'Pipe') then
+    begin
+      LServerPathArr := ['node ../../source/Node.js/Node.Pipe.js'];
+    end else
+    begin
+      LServerPathArr := ['Indy.' + LProtocol];
+    end;
+
+    S := ParamStr(2);
+    if TryStrToInt(S, LClientCount) and (LClientCount > 0) then
+    begin
+      LClientCountArr := [LClientCount];
+    end else
+    begin
+      LClientCountArr := CLIENT_COUNTS;
+    end;
+
+    S := ParamStr(3);
+    if (S = '0') or (S = '1') then
+    begin
+      LWorkModeArr := [S = '1'];
+    end else
+    begin
+      LWorkModeArr := WORK_MODES;
+    end;
+  end;
+
+  for LServerPath in LServerPathArr do
   begin
     Writeln;
+    {$ifdef DEBUG}
+    Writeln('DEBUG mode');
+    {$endif}
 
     try
-      for LClientCount in CLIENT_COUNTS do
-      for LWorkMode in WORK_MODES do
+      for LClientCount in LClientCountArr do
+      for LWorkMode in LWorkModeArr do
       begin
         LServerName := StringReplace(LServerPath, '.js', '', [rfReplaceAll]);
         repeat
@@ -370,10 +414,13 @@ begin
     end;
   end;
 
-  {$ifdef DEBUG}
-  Write('Press Enter to quit');
-  Readln;
-  {$endif}
+  {$WARNINGS OFF}
+  if (System.DebugHook <> 0) then
+  begin
+    Write('Press Enter to quit');
+    Readln;
+  end;
+  {$WARNINGS ON}
 end;
 
 

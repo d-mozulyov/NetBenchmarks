@@ -1,4 +1,4 @@
-program benckmark.TCP;
+program benchmark.TCP;
 
 {$APPTYPE CONSOLE}
 
@@ -29,13 +29,5 @@ end;
 
 
 begin
-  TBenchmark.Run(TTCPClient, [
-    'bin/HTTP/Indy.HTTP',
-    'bin/HTTP/IndyPool.HTTP',
-    'bin/HTTP/RealThinClient.HTTP',
-    'bin/HTTP/Synopse.HTTP',
-    'bin/HTTP/TMSSparkle.HTTP',
-    'node source/Node.js/Node.HTTP.js',
-    'bin/HTTP/Golang.HTTP'
-  ]);
+  TBenchmark.Run(TTCPClient);
 end.
