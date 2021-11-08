@@ -16,21 +16,17 @@ uses
 
 type
 
-(*
-    Типичная картина наиболее сложного протокола: UDPx2
+{ TOSTime record }
 
-    Приложение запускается, первым аргументтом будет путь до приложения
-    Если аргумент не указан - берётся дефолтный сервер: Indy или Node.js (для Pipe)
-    Далее принимается аргумент количество соединений. Если не указано: 1, 100 и 10000
-    Далее - вариант рабочей нагрузки. По умолчанию: False, True
+  TOSTime = record
+  private
+    class var
+      TIMESTAMP_TICK_UNFREQUENCY: Double;
 
-    Засекается время
-    На протяжении определённого времени происходит обработка сообщений
-
-*)
-
-  TClient = class;
-  TClientClass = class of TClient;
+    class constructor ClassCreate;
+  public
+    class function GetTimestamp: Cardinal; static; inline;
+  end;
 
 
 { TSyncYield record }
@@ -46,17 +42,45 @@ type
   end;
 
 
-{ TOSTime record }
+{ TStatistics record }
 
-  TOSTime = record
-  private
-    class var
-      TIMESTAMP_TICK_UNFREQUENCY: Double;
+  TStatistics = record
+    RequestCount: Integer;
+    ResponseCount: Integer;
 
-    class constructor ClassCreate;
-  public
-    class function GetTimestamp: Cardinal; static; inline;
+    class operator Add(const A, B: TStatistics): TStatistics;
   end;
+
+
+{ TClient class }
+
+  TClient = class(TObject)
+  protected
+    FStackNext: TClient;
+    FStatistics: TStatistics;
+    FIndex: Integer;
+    FWorkMode: Boolean;
+    FCheckMode: Boolean;
+
+    class procedure BenchmarkInit(const AClientCount: Integer; const AWorkMode: Boolean); virtual;
+    class procedure BenchmarkFinal(const AClientCount: Integer; const AWorkMode: Boolean); virtual;
+    class procedure BenchmarkGCRun; virtual;
+    class function BenchmarkGCTimeOut: Cardinal; virtual;
+    procedure DoRun; virtual; abstract;
+    procedure DoInit; virtual; abstract;
+  public
+    constructor Create(const AIndex: Integer; const AWorkMode, ACheckMode: Boolean); virtual;
+    procedure Run; inline;
+    procedure Done(const AError: PWideChar = nil);
+
+    property Statistics: TStatistics read FStatistics;
+    property RequestCount: Integer read FStatistics.RequestCount;
+    property ResponseCount: Integer read FStatistics.ResponseCount;
+    property Index: Integer read FIndex;
+    property WorkMode: Boolean read FWorkMode;
+    property CheckMode: Boolean read FCheckMode;
+  end;
+  TClientClass = class of TClient;
 
 
 { TClientStack record }
@@ -106,9 +130,6 @@ type
       ClientCount: Integer;
       Clients: TArray<TClient>;
       ClientStack: PClientStack;
-      RequestCount: Integer;
-      ResponseCount: Integer;
-
       Error: PChar;
       Timestamp: Cardinal;
       Terminated: Boolean;
@@ -117,37 +138,14 @@ type
     class destructor ClassDestroy;
     class procedure InternalLoadJson(const AFileName: string; out AStr: string;
       out AUtf8: UTF8String; out ABytes: TBytes; out ALength: Integer); static;
-    class procedure InternalRun(const AClientClass: TClientClass;
-      const AClientCount: Integer; const AWorkMode, ACheckMode: Boolean); static;
+    class function InternalRun(const AClientClass: TClientClass;
+      const AClientCount: Integer; const AWorkMode, ACheckMode: Boolean): TStatistics; static;
   public
     class procedure Run(const AClientClass: TClientClass); static;
   end;
 
 
-{ TClient class }
 
-  TClient = class(TObject)
-  private
-    FStackNext: TClient;
-    FIndex: Integer;
-    FWorkMode: Boolean;
-    FCheckMode: Boolean;
-  protected
-    class procedure BenchmarkInit(const AClientCount: Integer; const AWorkMode: Boolean); virtual;
-    class procedure BenchmarkFinal(const AClientCount: Integer; const AWorkMode: Boolean); virtual;
-    class procedure BenchmarkGCRun; virtual;
-    class function BenchmarkGCTimeOut: Cardinal; virtual;
-    procedure DoRun; virtual; abstract;
-    procedure DoInit; virtual; abstract;
-  public
-    constructor Create(const AIndex: Integer; const AWorkMode, ACheckMode: Boolean); virtual;
-    procedure Run; inline;
-    procedure Done(const AError: PWideChar = nil);
-
-    property Index: Integer read FIndex;
-    property WorkMode: Boolean read FWorkMode;
-    property CheckMode: Boolean read FCheckMode;
-  end;
 
 
 implementation
@@ -181,6 +179,25 @@ end;
 {$endif}
 
 
+{ TOSTime }
+
+class constructor TOSTime.ClassCreate;
+begin
+  if TStopwatch.IsHighResolution then
+  begin
+    TIMESTAMP_TICK_UNFREQUENCY := 10000000.0 / TTimeSpan.TicksPerMillisecond / TStopwatch.Frequency;
+  end else
+  begin
+    TIMESTAMP_TICK_UNFREQUENCY := 1.0 / TTimeSpan.TicksPerMillisecond;
+  end;
+end;
+
+class function TOSTime.GetTimestamp: Cardinal;
+begin
+  Result := Round(TIMESTAMP_TICK_UNFREQUENCY * TStopwatch.GetTimeStamp);
+end;
+
+
 { TSyncYield }
 
 procedure TSyncYield.Reset;
@@ -203,22 +220,71 @@ begin
 end;
 
 
-{ TOSTime }
+{ TStatistics }
 
-class constructor TOSTime.ClassCreate;
+class operator TStatistics.Add(const A, B: TStatistics): TStatistics;
 begin
-  if TStopwatch.IsHighResolution then
+  Result.RequestCount := A.RequestCount + B.RequestCount;
+  Result.ResponseCount := A.ResponseCount + B.ResponseCount;
+end;
+
+
+{ TClient }
+
+class procedure TClient.BenchmarkInit(const AClientCount: Integer; const AWorkMode: Boolean);
+begin
+end;
+
+class procedure TClient.BenchmarkFinal(const AClientCount: Integer; const AWorkMode: Boolean);
+begin
+end;
+
+class procedure TClient.BenchmarkGCRun;
+begin
+end;
+
+class function TClient.BenchmarkGCTimeOut: Cardinal;
+begin
+  Result := 0;
+end;
+
+constructor TClient.Create(const AIndex: Integer; const AWorkMode, ACheckMode: Boolean);
+begin
+  inherited Create;
+  FIndex := AIndex;
+  FWorkMode := AWorkMode;
+  FCheckMode := ACheckMode;
+end;
+
+procedure TClient.Run;
+begin
+  if (not TBenchmark.Terminated) then
   begin
-    TIMESTAMP_TICK_UNFREQUENCY := 10000000.0 / TTimeSpan.TicksPerMillisecond / TStopwatch.Frequency;
-  end else
-  begin
-    TIMESTAMP_TICK_UNFREQUENCY := 1.0 / TTimeSpan.TicksPerMillisecond;
+    Inc(FStatistics.RequestCount);
+    DoRun;
   end;
 end;
 
-class function TOSTime.GetTimestamp: Cardinal;
+procedure TClient.Done(const AError: PWideChar);
 begin
-  Result := Round(TIMESTAMP_TICK_UNFREQUENCY * TStopwatch.GetTimeStamp);
+  if Assigned(AError) then
+  begin
+    if CheckMode then
+      TBenchmark.Error := AError;
+  end else
+  if (not TBenchmark.Terminated) then
+  begin
+    if CheckMode then
+    begin
+      FStatistics.ResponseCount := 1;
+      Exit;
+    end else
+    begin
+      Inc(FStatistics.ResponseCount);
+    end;
+  end;
+
+  TBenchmark.ClientStack.Push(Self);
 end;
 
 
@@ -331,8 +397,8 @@ begin
   end;
 end;
 
-class procedure TBenchmark.InternalRun(const AClientClass: TClientClass;
-  const AClientCount: Integer; const AWorkMode, ACheckMode: Boolean);
+class function TBenchmark.InternalRun(const AClientClass: TClientClass;
+  const AClientCount: Integer; const AWorkMode, ACheckMode: Boolean): TStatistics;
 var
   i: Integer;
   LSyncYield: TSyncYield;
@@ -340,8 +406,8 @@ var
   LGCTimeOut, LGCLastTime: Cardinal;
   LCurrentClient, LNextClient: TClient;
 begin
+  Result := Default(TStatistics);
   Timestamp := TOSTime.GetTimestamp;
-
   AClientClass.BenchmarkInit(AClientCount, AWorkMode);
   try
     // GC timeout
@@ -367,8 +433,6 @@ begin
     end;
 
     // process loop
-    RequestCount := 0;
-    ResponseCount := 0;
     Error := nil;
     Terminated := False;
     LSyncYield.Reset;
@@ -408,7 +472,7 @@ begin
       // is terminated
       if (ACheckMode) then
       begin
-        Terminated := (ResponseCount > 0) or Assigned(Error);
+        Terminated := (Clients[0].ResponseCount > 0) or Assigned(Error);
         if (not Terminated) and (Cardinal(Timestamp - LStartTime) >= (1000 * 1)) then
         begin
           Terminated := True;
@@ -426,6 +490,7 @@ begin
     AClientClass.BenchmarkFinal(AClientCount, AWorkMode);
     for i := Low(Clients) to High(Clients) do
     begin
+      Result := Result + Clients[i].Statistics;
       FreeAndNil(Clients[i]);
     end;
     Clients := nil;
@@ -448,6 +513,7 @@ var
   LClientCount: Integer;
   LWorkMode: Boolean;
   LServerName: string;
+  LStatistics: TStatistics;
 begin
   // protocol
   LProtocol := StringReplace(AClientClass.UnitName, 'benchmark.', '', [rfReplaceAll, rfIgnoreCase]);
@@ -519,10 +585,10 @@ begin
             raise Exception.CreateFmt('%s', [TBenchmark.Error]);
 
           // run benchmark
-          TBenchmark.InternalRun(AClientClass, LClientCount, LWorkMode, False);
+          LStatistics := TBenchmark.InternalRun(AClientClass, LClientCount, LWorkMode, False);
           Writeln(Format('requests: %d, responses: %d, throughput: %d/sec', [
-              TBenchmark.RequestCount, TBenchmark.ResponseCount,
-              Round(TBenchmark.ResponseCount / TBenchmark.TIMEOUT_SEC)
+              LStatistics.RequestCount, LStatistics.ResponseCount,
+              Round(LStatistics.ResponseCount / TBenchmark.TIMEOUT_SEC)
             ]));
         finally
           {ToDo остановить сервер}
@@ -549,64 +615,6 @@ begin
     Readln;
   end;
   {$WARNINGS ON}
-end;
-
-
-{ TClient }
-
-class procedure TClient.BenchmarkInit(const AClientCount: Integer; const AWorkMode: Boolean);
-begin
-end;
-
-class procedure TClient.BenchmarkFinal(const AClientCount: Integer; const AWorkMode: Boolean);
-begin
-end;
-
-class procedure TClient.BenchmarkGCRun;
-begin
-end;
-
-class function TClient.BenchmarkGCTimeOut: Cardinal;
-begin
-  Result := 0;
-end;
-
-constructor TClient.Create(const AIndex: Integer; const AWorkMode, ACheckMode: Boolean);
-begin
-  inherited Create;
-  FIndex := AIndex;
-  FWorkMode := AWorkMode;
-  FCheckMode := ACheckMode;
-end;
-
-procedure TClient.Run;
-begin
-  if (not TBenchmark.Terminated) then
-  begin
-    AtomicIncrement(TBenchmark.RequestCount);
-    DoRun;
-  end;
-end;
-
-procedure TClient.Done(const AError: PWideChar);
-begin
-  if Assigned(AError) then
-  begin
-    if CheckMode then
-      TBenchmark.Error := AError;
-  end else
-  if (not TBenchmark.Terminated) then
-  begin
-    if CheckMode then
-    begin
-      TBenchmark.ResponseCount := 1;
-    end else
-    begin
-      AtomicIncrement(TBenchmark.ResponseCount);
-    end;
-  end;
-
-  TBenchmark.ClientStack.Push(Self);
 end;
 
 
