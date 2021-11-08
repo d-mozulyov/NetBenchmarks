@@ -410,9 +410,6 @@ begin
   Timestamp := TOSTime.GetTimestamp;
   AClientClass.BenchmarkInit(AClientCount, AWorkMode);
   try
-    // GC timeout
-    LGCTimeOut := AClientClass.BenchmarkGCTimeOut;
-
     // create clients
     ClientCount := AClientCount;
     SetLength(Clients, ClientCount);
@@ -436,6 +433,7 @@ begin
     Error := nil;
     Terminated := False;
     LSyncYield.Reset;
+    LGCTimeOut := AClientClass.BenchmarkGCTimeOut;
     Timestamp := TOSTime.GetTimestamp;
     LStartTime := Timestamp;
     LGCLastTime := Timestamp;
@@ -490,8 +488,12 @@ begin
     AClientClass.BenchmarkFinal(AClientCount, AWorkMode);
     for i := Low(Clients) to High(Clients) do
     begin
-      Result := Result + Clients[i].Statistics;
-      FreeAndNil(Clients[i]);
+      LCurrentClient := Clients[i];
+      if Assigned(LCurrentClient) then
+      begin
+        Result := Result + LCurrentClient.Statistics;
+        LCurrentClient.Free;
+      end;
     end;
     Clients := nil;
   end;
