@@ -396,7 +396,7 @@ begin
           LCurrentClient.FStackNext := nil;
 
           LCurrentClient.Run;
-        until Assigned(LNextClient);
+        until (not Assigned(LNextClient));
       end else
       begin
         LSyncYield.Execute;
@@ -530,7 +530,15 @@ begin
       end;
     except
       on E: Exception do
-        Writeln(E.ClassName, ': ', E.Message);
+      begin
+        if E.ClassType = Exception then
+        begin
+          Writeln(E.Message);
+        end else
+        begin
+          Writeln(E.ClassName, ': ', E.Message);
+        end;
+      end;
     end;
   end;
 
@@ -589,7 +597,13 @@ begin
   end else
   if (not TBenchmark.Terminated) then
   begin
-    AtomicIncrement(TBenchmark.ResponseCount);
+    if CheckMode then
+    begin
+      TBenchmark.ResponseCount := 1;
+    end else
+    begin
+      AtomicIncrement(TBenchmark.ResponseCount);
+    end;
   end;
 
   TBenchmark.ClientStack.Push(Self);
