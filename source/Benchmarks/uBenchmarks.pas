@@ -8,6 +8,7 @@ uses
   {$endif}
   System.SysUtils,
   System.Classes,
+  System.TimeSpan,
   System.Diagnostics,
   System.IOUtils,
   System.Generics.Collections,
@@ -42,6 +43,19 @@ type
     procedure Execute;
 
     property Count: Byte read FCount write FCount;
+  end;
+
+
+{ TOSTime record }
+
+  TOSTime = record
+  private
+    class var
+      TIMESTAMP_TICK_UNFREQUENCY: Double;
+
+    class constructor ClassCreate;
+  public
+    class function GetTimestamp: Cardinal; static; inline;
   end;
 
 
@@ -94,9 +108,10 @@ type
       ClientStack: PClientStack;
       RequestCount: Integer;
       ResponseCount: Integer;
-      Error: PChar;
-      Terminated: Boolean;
 
+      Error: PChar;
+      Timestamp: Cardinal;
+      Terminated: Boolean;
   private
     class constructor ClassCreate;
     class destructor ClassDestroy;
@@ -120,6 +135,8 @@ type
   protected
     class procedure BenchmarkInit(const AClientCount: Integer; const AWorkMode: Boolean); virtual;
     class procedure BenchmarkFinal(const AClientCount: Integer; const AWorkMode: Boolean); virtual;
+    class procedure BenchmarkGCRun; virtual;
+    class function BenchmarkGCTimeOut: Cardinal; virtual;
     procedure DoRun; virtual; abstract;
     procedure DoInit; virtual; abstract;
   public
@@ -183,6 +200,25 @@ begin
   else
     Sleep(1);
   end;
+end;
+
+
+{ TOSTime }
+
+class constructor TOSTime.ClassCreate;
+begin
+  if TStopwatch.IsHighResolution then
+  begin
+    TIMESTAMP_TICK_UNFREQUENCY := 10000000.0 / TTimeSpan.TicksPerMillisecond / TStopwatch.Frequency;
+  end else
+  begin
+    TIMESTAMP_TICK_UNFREQUENCY := 1.0 / TTimeSpan.TicksPerMillisecond;
+  end;
+end;
+
+class function TOSTime.GetTimestamp: Cardinal;
+begin
+  Result := Round(TIMESTAMP_TICK_UNFREQUENCY * TStopwatch.GetTimeStamp);
 end;
 
 
@@ -300,11 +336,17 @@ class procedure TBenchmark.InternalRun(const AClientClass: TClientClass;
 var
   i: Integer;
   LSyncYield: TSyncYield;
-  LStopwatch: TStopwatch;
+  LStartTime: Cardinal;
+  LGCTimeOut, LGCLastTime: Cardinal;
   LCurrentClient, LNextClient: TClient;
 begin
+  Timestamp := TOSTime.GetTimestamp;
+
   AClientClass.BenchmarkInit(AClientCount, AWorkMode);
   try
+    // GC timeout
+    LGCTimeOut := AClientClass.BenchmarkGCTimeOut;
+
     // create clients
     ClientCount := AClientCount;
     SetLength(Clients, ClientCount);
@@ -330,11 +372,17 @@ begin
     Error := nil;
     Terminated := False;
     LSyncYield.Reset;
-    LStopwatch := TStopwatch.StartNew;
+    Timestamp := TOSTime.GetTimestamp;
+    LStartTime := Timestamp;
+    LGCLastTime := Timestamp;
     while (not Terminated) do
     begin
-      // алгоритм с проверкой таймаутов 5мск?
-      // ToDo
+      // check GC timeout
+      if (LGCTimeOut <> 0) and (Cardinal(Timestamp - LGCLastTime) >= LGCTimeOut) then
+      begin
+        LGCLastTime := Timestamp;
+        AClientClass.BenchmarkGCRun;
+      end;
 
       // running clients
       LNextClient := ClientStack.PopAll;
@@ -354,18 +402,21 @@ begin
         LSyncYield.Execute;
       end;
 
+      // timestamp
+      Timestamp := TOSTime.GetTimestamp;
+
       // is terminated
       if (ACheckMode) then
       begin
         Terminated := (ResponseCount > 0) or Assigned(Error);
-        if (not Terminated) and (LStopwatch.ElapsedMilliseconds >= (1000 * 1)) then
+        if (not Terminated) and (Cardinal(Timestamp - LStartTime) >= (1000 * 1)) then
         begin
           Terminated := True;
           Error := 'Timeout error';
         end;
       end else
       begin
-        Terminated := (LStopwatch.ElapsedMilliseconds >= (1000 * TIMEOUT_SEC));
+        Terminated := (Cardinal(Timestamp - LStartTime) >= (1000 * TIMEOUT_SEC));
       end;
     end;
 
@@ -501,6 +552,15 @@ end;
 
 class procedure TClient.BenchmarkFinal(const AClientCount: Integer; const AWorkMode: Boolean);
 begin
+end;
+
+class procedure TClient.BenchmarkGCRun;
+begin
+end;
+
+class function TClient.BenchmarkGCTimeOut: Cardinal;
+begin
+  Result := 0;
 end;
 
 constructor TClient.Create(const AIndex: Integer; const AWorkMode, ACheckMode: Boolean);
