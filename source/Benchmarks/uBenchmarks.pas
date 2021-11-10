@@ -4,6 +4,7 @@ interface
 uses
   {$ifdef MSWINDOWS}
     Winapi.Windows,
+    Winapi.ShellApi,
   {$else .POSIX}
   {$endif}
   System.SysUtils,
@@ -39,6 +40,24 @@ type
     procedure Execute;
 
     property Count: Byte read FCount write FCount;
+  end;
+
+
+{ TProcess class }
+
+  TProcess = class
+  protected
+    {$ifdef MSWINDOWS}
+    FHandle: THandle;
+    {$endif}
+  public
+    constructor Create(const APath: string; const AParameters: string = '';
+      const ADirectory: string = ''; const AVisible: Boolean = True);
+    destructor Destroy; override;
+
+    {$ifdef MSWINDOWS}
+    property Handle: THandle read FHandle;
+    {$endif}
   end;
 
 
@@ -145,9 +164,6 @@ type
   end;
 
 
-
-
-
 implementation
 
 {$ifdef MSWINDOWS}
@@ -217,6 +233,53 @@ begin
   else
     Sleep(1);
   end;
+end;
+
+
+{ TProcess }
+
+constructor TProcess.Create(const APath: string; const AParameters: string;
+  const ADirectory: string; const AVisible: Boolean);
+{$ifdef MSWINDOWS}
+const
+  VISIBLE_MODES: array[Boolean] of Integer = (SW_HIDE, SW_SHOWDEFAULT);
+var
+  LShExecInfo: TShellExecuteInfo;
+begin
+  inherited Create;
+  FHandle := INVALID_HANDLE_VALUE;
+
+  FillChar(LShExecInfo, SizeOf(LShExecInfo), #0);
+  LShExecInfo.cbSize := SizeOf(LShExecInfo);
+  LShExecInfo.fMask := SEE_MASK_NOCLOSEPROCESS;
+  LShExecInfo.lpFile := Pointer(APath);
+  LShExecInfo.lpParameters := Pointer(AParameters);
+  LShExecInfo.lpDirectory := Pointer(ADirectory);
+  LShExecInfo.nShow := VISIBLE_MODES[AVisible];
+  if ShellExecuteEx(@LShExecInfo) then
+    FHandle := LShExecInfo.hProcess
+  else
+    RaiseLastOSError;
+end;
+{$else .POSIX}
+begin
+  inherited Create;
+  {$MESSAGE ERROR 'Platform not yet supported'}
+end;
+{$endif}
+
+destructor TProcess.Destroy;
+begin
+  {$ifdef MSWINDOWS}
+  if FHandle <> INVALID_HANDLE_VALUE then
+  begin
+    TerminateProcess(FHandle, 0);
+    CloseHandle(FHandle);
+  end;
+  {$else .POSIX}
+  {$endif}
+
+  inherited;
 end;
 
 
@@ -515,6 +578,9 @@ var
   LClientCount: Integer;
   LWorkMode: Boolean;
   LServerName: string;
+  LProcessPath: string;
+  LProcessParameters: string;
+  LProcessProcess: TProcess;
   LStatistics: TStatistics;
 begin
   // protocol
@@ -575,8 +641,19 @@ begin
         until (False);
         Write(Format('%s %d con %s... ', [LServerName, LClientCount, WORK_MODE_STRS[LWorkMode]]));
 
-        {ToDo запуск сервера}
-
+        if (Copy(LServerPath, 1, 5) = 'node ') then
+        begin
+          LProcessPath := 'node';
+          LProcessParameters := Copy(LServerPath, 6, High(Integer)) + ' ' + IntToStr(Byte(LWorkMode));
+        end else
+        begin
+          LProcessPath := LServerPath;
+          LProcessParameters := IntToStr(Byte(LWorkMode));
+        end;
+        {$ifdef MSWINDOWS}
+        LProcessPath := LProcessPath + '.exe';
+        {$endif}
+        LProcessProcess := TProcess.Create(LProcessPath, LProcessParameters, '', False);
         try
           Sleep({$ifdef DEBUG}500{$else}1000{$endif});
 
@@ -593,7 +670,7 @@ begin
               Round(LStatistics.ResponseCount / TBenchmark.TIMEOUT_SEC)
             ]));
         finally
-          {ToDo остановить сервер}
+          LProcessProcess.Free;
         end;
       end;
     except
