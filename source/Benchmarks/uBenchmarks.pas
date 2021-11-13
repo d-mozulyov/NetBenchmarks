@@ -84,10 +84,12 @@ type
     class procedure BenchmarkProcess; virtual;
     procedure DoRun; virtual; abstract;
     procedure DoInit; virtual; abstract;
+    procedure InternalDoneOSError(const AErrorCode: Integer);
   public
     constructor Create(const AIndex: Integer); virtual;
     procedure Run; inline;
-    procedure Done(const AError: PWideChar = nil);
+    procedure Done(const AError: string);
+    procedure DoneOSError(const AErrorCode: Integer); inline;
 
     property Statistics: TStatistics read FStatistics;
     property RequestCount: Integer read FStatistics.RequestCount;
@@ -149,7 +151,7 @@ type
       Reserved: Boolean;
       Terminated: Boolean;
       Timestamp: Cardinal;
-      Error: PChar;
+      Error: string;
   private
     class constructor ClassCreate;
     class destructor ClassDestroy;
@@ -319,9 +321,9 @@ begin
   end;
 end;
 
-procedure TClient.Done(const AError: PWideChar);
+procedure TClient.Done(const AError: string);
 begin
-  if Assigned(AError) then
+  if Assigned(Pointer(AError)) then
   begin
     if TBenchmark.CheckMode then
       TBenchmark.Error := AError;
@@ -339,6 +341,22 @@ begin
   end;
 
   TBenchmark.ClientStack.Push(Self);
+end;
+
+procedure TClient.InternalDoneOSError(const AErrorCode: Integer);
+begin
+  Done(SysErrorMessage(AErrorCode));
+end;
+
+procedure TClient.DoneOSError(const AErrorCode: Integer);
+begin
+  if (TBenchmark.CheckMode) then
+  begin
+    InternalDoneOSError(AErrorCode);
+  end else
+  begin
+    Done('Internal system error');
+  end;
 end;
 
 
@@ -492,7 +510,7 @@ begin
   TBenchmark.CheckMode := ACheckMode;
   TBenchmark.Terminated := False;
   TBenchmark.Timestamp := TOSTime.GetTimestamp;
-  TBenchmark.Error := nil;
+  TBenchmark.Error := '';
   try
     AClientClass.BenchmarkInit;
 
@@ -538,7 +556,7 @@ begin
       // is terminated
       if (ACheckMode) then
       begin
-        Terminated := (TBenchmark.Clients[0].ResponseCount > 0) or Assigned(Error);
+        Terminated := (TBenchmark.Clients[0].ResponseCount > 0) or Assigned(Pointer(Error));
         if (not Terminated) and (Cardinal(Timestamp - LStartTime) >= (1000 * 1)) then
         begin
           Terminated := True;
@@ -667,7 +685,7 @@ begin
 
           // check
           TBenchmark.InternalRun(AClientClass, 1, LWorkMode, True);
-          if Assigned(TBenchmark.Error) then
+          if Assigned(Pointer(TBenchmark.Error)) then
             raise Exception.CreateFmt('%s', [TBenchmark.Error]);
 
           // run benchmark

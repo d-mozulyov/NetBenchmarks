@@ -36,6 +36,28 @@ function PostQueuedCompletionStatus(CompletionPort: THandle; dwNumberOfBytesTran
 
 type
 
+{ IOCP routine }
+
+  TIOCPCallback = function(const AParam: Pointer; const AErrorCode: Integer): Boolean of object;
+
+  PIOCPObject = ^TIOCPObject;
+  TIOCPObject = object
+    Overlapped: TOverlapped;
+    Callback: TIOCPCallback;
+  end;
+
+  TIOCPBuffer = object(TIOCPObject)
+  private
+    function OverflowAlloc(const ASize: Integer): Pointer;
+  public
+    Bytes: TBytes;
+    ReservedSize: Integer;
+    Size: Integer;
+    Tag: NativeUInt;
+
+    function Alloc(const ASize: Integer; const AAppendMode: Boolean = False): Pointer; inline;
+  end;
+
   TIOCP = class
   protected
     class var
@@ -48,9 +70,12 @@ type
     constructor Create;
     destructor Destroy; override;
 
-    procedure Bind(const AHandle: THandle; const AParam: Pointer);
+    procedure Bind(const AItemHandle: THandle; const AParam: Pointer = nil);
+    function Process: Boolean;
   end;
 
+
+{ TIOCPClient class }
 
   TIOCPClient = class(TClient)
   protected
@@ -60,13 +85,67 @@ type
     class procedure BenchmarkInit; override;
     class procedure BenchmarkFinal; override;
     class procedure BenchmarkProcess; override;
+  protected
+    FInBuffer: TIOCPBuffer;
+    FOutBuffer: TIOCPBuffer;
+
+    function InBufferCallback(const AParam: Pointer; const AErrorCode: Integer): Boolean; virtual;
+    function OutBufferCallback(const AParam: Pointer; const AErrorCode: Integer): Boolean; virtual;
   public
+    constructor Create(const AIndex: Integer); override;
 
     class property IOCP: TIOCP read FIOCP;
+    property InBuffer: TIOCPBuffer read FInBuffer;
+    property OutBuffer: TIOCPBuffer read FOutBuffer;
   end;
 
 
+
 implementation
+
+
+{ TIOCPBuffer }
+
+function TIOCPBuffer.OverflowAlloc(const ASize: Integer): Pointer;
+var
+  LOffset: Integer;
+begin
+  LOffset := Size - ASize;
+  if (Size > ReservedSize) then
+  begin
+    ReservedSize := (Size + 63) and -64;
+    SetLength(Bytes, ReservedSize);
+  end;
+
+  Result := @Bytes[LOffset];
+end;
+
+function TIOCPBuffer.Alloc(const ASize: Integer; const AAppendMode: Boolean): Pointer;
+var
+  LNewSize: Integer;
+begin
+  if (not AAppendMode) then
+  begin
+    LNewSize := ASize;
+    Size := LNewSize;
+    if LNewSize <= ReservedSize then
+    begin
+      Result := Pointer(Bytes);
+      Exit;
+    end;
+  end else
+  begin
+    LNewSize := Size + ASize;
+    Size := LNewSize;
+    if LNewSize <= ReservedSize then
+    begin
+      Result := @Bytes[LNewSize - ASize];
+      Exit;
+    end;
+  end;
+
+  Result := OverflowAlloc(ASize);
+end;
 
 
 { TIOCP }
@@ -111,10 +190,36 @@ begin
   inherited;
 end;
 
-procedure TIOCP.Bind(const AHandle: THandle; const AParam: Pointer);
+procedure TIOCP.Bind(const AItemHandle: THandle; const AParam: Pointer);
 begin
-  if (CreateIoCompletionPort(AHandle, FHandle, ULONG_PTR(AParam), TIOCP.CPUCount * 2) = 0) then
+  if (CreateIoCompletionPort(AItemHandle, FHandle, ULONG_PTR(AParam), TIOCP.CPUCount * 2) = 0) then
     RaiseLastOSError;
+end;
+
+function TIOCP.Process: Boolean;
+var
+  lpNumberOfBytesTransferred: DWORD;
+  LParam: Pointer;
+  LIOCPObject: PIOCPObject;
+begin
+  Result := False;
+
+  repeat
+    if GetQueuedCompletionStatus(FHandle, lpNumberOfBytesTransferred,
+      ULONG_PTR(LParam), POverlapped(LIOCPObject), 0) then
+    begin
+      LIOCPObject.Callback(LParam, 0);
+      Result := True;
+    end else
+    if Assigned(LIOCPObject) then
+    begin
+      LIOCPObject.Callback(LParam, GetLastError);
+      Result := True;
+    end else
+    begin
+      Exit;
+    end;
+  until (False);
 end;
 
 
@@ -135,7 +240,41 @@ end;
 class procedure TIOCPClient.BenchmarkProcess;
 begin
   inherited;
+  TIOCPClient.FIOCP.Process;
+end;
 
+constructor TIOCPClient.Create(const AIndex: Integer);
+begin
+  inherited Create(AIndex);
+
+  FInBuffer.Callback := Self.InBufferCallback;
+  FOutBuffer.Callback := Self.OutBufferCallback;
+end;
+
+function TIOCPClient.InBufferCallback(const AParam: Pointer;
+  const AErrorCode: Integer): Boolean;
+begin
+  if AErrorCode = 0 then
+  begin
+    Result := True;
+  end else
+  begin
+    DoneOSError(AErrorCode);
+    Result := False;
+  end;
+end;
+
+function TIOCPClient.OutBufferCallback(const AParam: Pointer;
+  const AErrorCode: Integer): Boolean;
+begin
+  if AErrorCode = 0 then
+  begin
+    Result := True;
+  end else
+  begin
+    DoneOSError(AErrorCode);
+    Result := False;
+  end;
 end;
 
 end.
