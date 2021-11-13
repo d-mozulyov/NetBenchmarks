@@ -78,17 +78,14 @@ type
     FStackNext: TClient;
     FStatistics: TStatistics;
     FIndex: Integer;
-    FWorkMode: Boolean;
-    FCheckMode: Boolean;
 
-    class procedure BenchmarkInit(const AClientCount: Integer; const AWorkMode: Boolean); virtual;
-    class procedure BenchmarkFinal(const AClientCount: Integer; const AWorkMode: Boolean); virtual;
-    class procedure BenchmarkGCRun; virtual;
-    class function BenchmarkGCTimeOut: Cardinal; virtual;
+    class procedure BenchmarkInit; virtual;
+    class procedure BenchmarkFinal; virtual;
+    class procedure BenchmarkProcess; virtual;
     procedure DoRun; virtual; abstract;
     procedure DoInit; virtual; abstract;
   public
-    constructor Create(const AIndex: Integer; const AWorkMode, ACheckMode: Boolean); virtual;
+    constructor Create(const AIndex: Integer); virtual;
     procedure Run; inline;
     procedure Done(const AError: PWideChar = nil);
 
@@ -96,8 +93,6 @@ type
     property RequestCount: Integer read FStatistics.RequestCount;
     property ResponseCount: Integer read FStatistics.ResponseCount;
     property Index: Integer read FIndex;
-    property WorkMode: Boolean read FWorkMode;
-    property CheckMode: Boolean read FCheckMode;
   end;
   TClientClass = class of TClient;
 
@@ -149,9 +144,12 @@ type
       ClientCount: Integer;
       Clients: TArray<TClient>;
       ClientStack: PClientStack;
-      Error: PChar;
-      Timestamp: Cardinal;
+      WorkMode: Boolean;
+      CheckMode: Boolean;
+      Reserved: Boolean;
       Terminated: Boolean;
+      Timestamp: Cardinal;
+      Error: PChar;
   private
     class constructor ClassCreate;
     class destructor ClassDestroy;
@@ -160,7 +158,7 @@ type
     class function InternalRun(const AClientClass: TClientClass;
       const AClientCount: Integer; const AWorkMode, ACheckMode: Boolean): TStatistics; static;
   public
-    class procedure Run(const AClientClass: TClientClass); static;
+    class procedure Run(const AClientClass: TClientClass; const ADefaultMultiThread: Boolean = False); static;
   end;
 
 
@@ -294,29 +292,22 @@ end;
 
 { TClient }
 
-class procedure TClient.BenchmarkInit(const AClientCount: Integer; const AWorkMode: Boolean);
+class procedure TClient.BenchmarkInit;
 begin
 end;
 
-class procedure TClient.BenchmarkFinal(const AClientCount: Integer; const AWorkMode: Boolean);
+class procedure TClient.BenchmarkFinal;
 begin
 end;
 
-class procedure TClient.BenchmarkGCRun;
+class procedure TClient.BenchmarkProcess;
 begin
 end;
 
-class function TClient.BenchmarkGCTimeOut: Cardinal;
-begin
-  Result := 0;
-end;
-
-constructor TClient.Create(const AIndex: Integer; const AWorkMode, ACheckMode: Boolean);
+constructor TClient.Create(const AIndex: Integer);
 begin
   inherited Create;
   FIndex := AIndex;
-  FWorkMode := AWorkMode;
-  FCheckMode := ACheckMode;
 end;
 
 procedure TClient.Run;
@@ -332,12 +323,12 @@ procedure TClient.Done(const AError: PWideChar);
 begin
   if Assigned(AError) then
   begin
-    if CheckMode then
+    if TBenchmark.CheckMode then
       TBenchmark.Error := AError;
   end else
   if (not TBenchmark.Terminated) then
   begin
-    if CheckMode then
+    if TBenchmark.CheckMode then
     begin
       FStatistics.ResponseCount := 1;
       Exit;
@@ -368,6 +359,13 @@ procedure TClientStack.PushList(const AFirst, ALast: TClient);
 var
   LItem, LNewItem: TClientStack;
 begin
+  if (not System.IsMultiThread) then
+  begin
+    ALast.FStackNext := Self.Head;
+    Self.Head := AFirst;
+    Exit;
+  end;
+
   repeat
     LItem := Self;
     LNewItem.Head := AFirst;
@@ -385,6 +383,16 @@ function TClientStack.Pop: TClient;
 var
   LItem, LNewItem: TClientStack;
 begin
+  if (not System.IsMultiThread) then
+  begin
+    Result := Self.Head;
+    if Assigned(Result) then
+    begin
+      Self.Head := Result.FStackNext;
+    end;
+    Exit;
+  end;
+
   repeat
     Result := Self.Head;
     if not Assigned(Result) then
@@ -403,6 +411,13 @@ function TClientStack.PopAll: TClient;
 var
   LItem, LNewItem: TClientStack;
 begin
+  if (not System.IsMultiThread) then
+  begin
+    Result := Self.Head;
+    Self.Head := nil;
+    Exit;
+  end;
+
   repeat
     Result := Self.Head;
     if not Assigned(Result) then
@@ -466,51 +481,41 @@ var
   i: Integer;
   LSyncYield: TSyncYield;
   LStartTime: Cardinal;
-  LGCTimeOut, LGCLastTime: Cardinal;
   LCurrentClient, LNextClient: TClient;
 begin
+  // initialization
   Result := Default(TStatistics);
-  Timestamp := TOSTime.GetTimestamp;
-  AClientClass.BenchmarkInit(AClientCount, AWorkMode);
+  TBenchmark.ClientCount := AClientCount;
+  SetLength(TBenchmark.Clients, AClientCount);
+  FillChar(Pointer(TBenchmark.Clients)^, AClientCount * SizeOf(TClient), #0);
+  TBenchmark.WorkMode := AWorkMode;
+  TBenchmark.CheckMode := ACheckMode;
+  TBenchmark.Terminated := False;
+  TBenchmark.Timestamp := TOSTime.GetTimestamp;
+  TBenchmark.Error := nil;
   try
-    // create clients
-    ClientCount := AClientCount;
-    SetLength(Clients, ClientCount);
-    FillChar(Pointer(Clients)^, ClientCount * SizeOf(Pointer), #0);
-    for i := 0 to ClientCount - 1 do
-      Clients[i] := AClientClass.Create(i, AWorkMode, ACheckMode);
+    AClientClass.BenchmarkInit;
 
-    // initialize clients
-    ClientStack.Head := Clients[0];
-    ClientStack.Counter := 0;
-    for i := 0 to ClientCount - 1 do
+    // clients
+    for i := 0 to AClientCount - 1 do
     begin
-      if (i <> ClientCount - 1) then
-      begin
-        Clients[i].FStackNext := Clients[i + 1];
-      end;
-      Clients[i].DoInit;
+      TBenchmark.Clients[i] := AClientClass.Create(i);
+      if (i > 0) then
+        TBenchmark.Clients[i - 1].FStackNext := TBenchmark.Clients[i];
     end;
+    TBenchmark.ClientStack.Head :=  TBenchmark.Clients[0];
+    TBenchmark.ClientStack.Counter := 0;
 
     // process loop
-    Error := nil;
-    Terminated := False;
     LSyncYield.Reset;
-    LGCTimeOut := AClientClass.BenchmarkGCTimeOut;
     Timestamp := TOSTime.GetTimestamp;
     LStartTime := Timestamp;
-    LGCLastTime := Timestamp;
     while (not Terminated) do
     begin
-      // check GC timeout
-      if (LGCTimeOut <> 0) and (Cardinal(Timestamp - LGCLastTime) >= LGCTimeOut) then
-      begin
-        LGCLastTime := Timestamp;
-        AClientClass.BenchmarkGCRun;
-      end;
+      AClientClass.BenchmarkProcess;
 
-      // running clients
-      LNextClient := ClientStack.PopAll;
+      // run clients
+      LNextClient := TBenchmark.ClientStack.PopAll;
       if Assigned(LNextClient) then
       begin
         LSyncYield.Reset;
@@ -533,7 +538,7 @@ begin
       // is terminated
       if (ACheckMode) then
       begin
-        Terminated := (Clients[0].ResponseCount > 0) or Assigned(Error);
+        Terminated := (TBenchmark.Clients[0].ResponseCount > 0) or Assigned(Error);
         if (not Terminated) and (Cardinal(Timestamp - LStartTime) >= (1000 * 1)) then
         begin
           Terminated := True;
@@ -546,23 +551,23 @@ begin
     end;
 
   finally
-    // destroy clients
+    // destroy TBenchmark.Clients
     Terminated := True;
-    AClientClass.BenchmarkFinal(AClientCount, AWorkMode);
-    for i := Low(Clients) to High(Clients) do
+    AClientClass.BenchmarkFinal;
+    for i := Low(TBenchmark.Clients) to High(TBenchmark.Clients) do
     begin
-      LCurrentClient := Clients[i];
+      LCurrentClient := TBenchmark.Clients[i];
       if Assigned(LCurrentClient) then
       begin
         Result := Result + LCurrentClient.Statistics;
         LCurrentClient.Free;
       end;
     end;
-    Clients := nil;
+    TBenchmark.Clients := nil;
   end;
 end;
 
-class procedure TBenchmark.Run(const AClientClass: TClientClass);
+class procedure TBenchmark.Run(const AClientClass: TClientClass; const ADefaultMultiThread: Boolean);
 const
   CLIENT_COUNTS: TArray<Integer> = [1, 100, 10000];
   WORK_MODES: TArray<Boolean> = [False, True];
@@ -583,6 +588,9 @@ var
   LProcessProcess: TProcess;
   LStatistics: TStatistics;
 begin
+  // multi-thread
+  System.IsMultiThread := System.IsMultiThread or ADefaultMultiThread;
+
   // protocol
   LProtocol := StringReplace(AClientClass.UnitName, 'benchmark.', '', [rfReplaceAll, rfIgnoreCase]);
 
@@ -653,12 +661,11 @@ begin
         {$ifdef MSWINDOWS}
         LProcessPath := LProcessPath + '.exe';
         {$endif}
-        LProcessProcess := TProcess.Create(LProcessPath, LProcessParameters, '', False);
+        LProcessProcess := {$ifdef NOPROCESS}nil{$else}TProcess.Create(LProcessPath, LProcessParameters, '', False){$endif};
         try
           Sleep({$ifdef DEBUG}500{$else}1000{$endif});
 
           // check
-          TBenchmark.Error := nil;
           TBenchmark.InternalRun(AClientClass, 1, LWorkMode, True);
           if Assigned(TBenchmark.Error) then
             raise Exception.CreateFmt('%s', [TBenchmark.Error]);
