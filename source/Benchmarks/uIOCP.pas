@@ -40,6 +40,7 @@ type
     Size: Integer;
     Tag: NativeUInt;
 
+    procedure Reserve(const ASize: Integer);
     function Alloc(const ASize: Integer; const AAppendMode: Boolean = False): Pointer; inline;
   end;
 
@@ -74,9 +75,9 @@ type
   end;
 
 
-{ TIOCPClient class }
+{ TCustomIOCPClient class }
 
-  TIOCPClient = class(TClient)
+  TCustomIOCPClient = class(TClient)
   protected
     class var
       FIOCP: TIOCP;
@@ -96,6 +97,14 @@ type
     class property IOCP: TIOCP read FIOCP;
     property InBuffer: TIOCPBuffer read FInBuffer;
     property OutBuffer: TIOCPBuffer read FOutBuffer;
+  end;
+
+
+{ TIOCPClient class }
+
+  TIOCPClient = class(TCustomIOCPClient)
+  public
+    constructor Create(const AIndex: Integer); override;
   end;
 
 
@@ -148,11 +157,25 @@ begin
   LOffset := Size - ASize;
   if (Size > ReservedSize) then
   begin
-    ReservedSize := (Size + 63) and -64;
-    SetLength(Bytes, ReservedSize);
+    Reserve(Size);
   end;
 
   Result := @Bytes[LOffset];
+end;
+
+procedure TIOCPBuffer.Reserve(const ASize: Integer);
+var
+  LReservedSize: Integer;
+begin
+  if (ASize >= Size) then
+  begin
+    LReservedSize := (ASize + 63) and -64;
+    if (LReservedSize <> ReservedSize) then
+    begin
+      SetLength(Bytes, LReservedSize);
+      ReservedSize := LReservedSize;
+    end;
+  end;
 end;
 
 function TIOCPBuffer.Alloc(const ASize: Integer; const AAppendMode: Boolean): Pointer;
@@ -193,8 +216,8 @@ end;
 constructor TIOCPEndpoint.Create(const AHost: string; const APort: Word);
 var
   LAsciiStr: string;
+  LAnsiStr: AnsiString;
   LHostEnt: PHostEnt;
-  LMarshaller: TMarshaller;
 begin
   FillChar(FSockAddr, SizeOf(FSockAddr), #0);
   FSockAddr.sin_family := AF_INET;
@@ -204,8 +227,9 @@ begin
   SetLength(LAsciiStr, IdnToAscii(0, PChar(AHost), Length(AHost), nil, 0));
   if Length(LAsciiStr) > 0 then
   begin
-    SetLength(LAsciiStr, IdnToAscii(0, PChar(AHost), length(AHost), PChar(LAsciiStr), Length(LAsciiStr)));
-    LHostEnt := gethostbyname(LMarshaller.AsAnsi(LAsciiStr).ToPointer);
+    SetLength(LAsciiStr, IdnToAscii(0, PChar(AHost), Length(AHost), PChar(LAsciiStr), Length(LAsciiStr)));
+    LAnsiStr := AnsiString(LAsciiStr);
+    LHostEnt := gethostbyname(Pointer(LAnsiStr));
   end;
   if Assigned(LHostEnt) then
     FSockAddr.sin_addr.s_addr := PCardinal(LHostEnt.h_addr_list^)^;
@@ -287,27 +311,27 @@ begin
 end;
 
 
-{ TIOCPClient }
+{ TCustomIOCPClient }
 
-class procedure TIOCPClient.BenchmarkInit;
+class procedure TCustomIOCPClient.BenchmarkInit;
 begin
   inherited;
-  TIOCPClient.FIOCP := TIOCP.Create;
+  TCustomIOCPClient.FIOCP := TIOCP.Create;
 end;
 
-class procedure TIOCPClient.BenchmarkFinal;
+class procedure TCustomIOCPClient.BenchmarkFinal;
 begin
   inherited;
-  FreeAndNil(TIOCPClient.FIOCP);
+  FreeAndNil(TCustomIOCPClient.FIOCP);
 end;
 
-class procedure TIOCPClient.BenchmarkProcess;
+class procedure TCustomIOCPClient.BenchmarkProcess;
 begin
   inherited;
-  TIOCPClient.FIOCP.Process;
+  TCustomIOCPClient.FIOCP.Process;
 end;
 
-constructor TIOCPClient.Create(const AIndex: Integer);
+constructor TCustomIOCPClient.Create(const AIndex: Integer);
 begin
   inherited Create(AIndex);
 
@@ -315,7 +339,7 @@ begin
   FOutBuffer.Callback := Self.OutBufferCallback;
 end;
 
-function TIOCPClient.InBufferCallback(const AParam: Pointer;
+function TCustomIOCPClient.InBufferCallback(const AParam: Pointer;
   const AErrorCode: Integer): Boolean;
 begin
   if AErrorCode = 0 then
@@ -328,7 +352,7 @@ begin
   end;
 end;
 
-function TIOCPClient.OutBufferCallback(const AParam: Pointer;
+function TCustomIOCPClient.OutBufferCallback(const AParam: Pointer;
   const AErrorCode: Integer): Boolean;
 begin
   if AErrorCode = 0 then
@@ -342,7 +366,16 @@ begin
 end;
 
 
+{ TIOCPClient }
 
+constructor TIOCPClient.Create(const AIndex: Integer);
+begin
+  inherited;
+
+  FInBuffer.Reserve(1024);
+  FOutBuffer.Reserve(FInBuffer.ReservedSize);
+  FOutBuffer.Overlapped.hEvent := 1;
+end;
 
 
 { TIOCPSocket }
@@ -359,7 +392,7 @@ begin
   if (FHandle = INVALID_SOCKET) then
     RaiseLastOSError;
 
-  TIOCPClient.IOCP.Bind(FHandle, Pointer(Self));
+  TCustomIOCPClient.IOCP.Bind(FHandle, Pointer(Self));
 end;
 
 destructor TIOCPSocket.Destroy;
