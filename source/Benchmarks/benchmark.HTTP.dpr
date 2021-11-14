@@ -3,6 +3,11 @@ program benchmark.HTTP;
 {$APPTYPE CONSOLE}
 
 uses
+  {$ifdef MSWINDOWS}
+    uIOCP,
+  {$else}
+    {$MESSAGE ERROR 'Platform not yet supported'}
+  {$endif}
   uBenchmarks;
 
 type

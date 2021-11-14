@@ -9,32 +9,17 @@ uses
   uBenchmarks;
 
 
-{
-  POverlapped = ^TOverlapped;
-  _OVERLAPPED = record
-    Internal: ULONG_PTR;
-    InternalHigh: ULONG_PTR;
-    Offset: DWORD;
-    OffsetHigh: DWORD;
-    hEvent: THandle;
+type
+
+{ WSA intiialization/finalization }
+
+  TWSA = record
+  class var
+    Data: WSAData;
+    class constructor ClassCreate;
+    class destructor ClassDestroy;
   end;
 
-function GetOverlappedResult(hFile: THandle; const lpOverlapped: TOverlapped;
-  var lpNumberOfBytesTransferred: DWORD; bWait: BOOL): BOOL; stdcall;
-function GetOverlappedResultEx(hFile: THandle; lpOverlapped: TOverlapped;
-  var lpNumberOfBytesTransferred: DWORD; dwMilliseconds: DWORD; bAlertable: Boolean): ByteBool; stdcall;
-function CreateIoCompletionPort(FileHandle, ExistingCompletionPort: THandle;
-  CompletionKey: ULONG_PTR; NumberOfConcurrentThreads: DWORD): THandle; stdcall;
-function GetQueuedCompletionStatus(CompletionPort: THandle;
-  var lpNumberOfBytesTransferred: DWORD; var lpCompletionKey: ULONG_PTR;
-  var lpOverlapped: POverlapped; dwMilliseconds: DWORD): BOOL; stdcall;
-function GetQueuedCompletionStatusEx(CompletionPort: THandle; var lpCompletionPortEntries: TOverlappedEntry;
-  ulCount: Cardinal; var ulNumEntriesRemoved: Cardinal; dwMilliseconds: DWORD; fAlertable: Boolean): ByteBool; stdcall;
-function PostQueuedCompletionStatus(CompletionPort: THandle; dwNumberOfBytesTransferred: DWORD;
-  dwCompletionKey: UIntPtr; lpOverlapped: POverlapped): BOOL; stdcall;
-}
-
-type
 
 { IOCP routine }
 
@@ -56,6 +41,20 @@ type
     Tag: NativeUInt;
 
     function Alloc(const ASize: Integer; const AAppendMode: Boolean = False): Pointer; inline;
+  end;
+
+  TIOCPProtocol = (ipTCP, ipUDP);
+
+  TIOCPEndpoint = record
+  private
+    FSockAddr: TSockAddrIn;
+    class constructor ClassCreate;
+  public
+    class var
+      Default: TIOCPEndpoint;
+
+    constructor Create(const AHost: string; const APort: Word);
+    property SockAddr: TSockAddrIn read FSockAddr;
   end;
 
   TIOCP = class
@@ -100,8 +99,44 @@ type
   end;
 
 
+{ TIOCPSocket class }
+
+  TIOCPSocket = class
+  public
+    type
+      {$ifdef MSWINDOWS}
+        TSocketHandle = Winapi.WinSock2.TSocket;
+      {$else .POSIX}
+        TSocketHandle = Integer;
+      {$ENDIF}
+  protected
+    FHandle: TSocketHandle;
+    FProtocol: TIOCPProtocol;
+  public
+    constructor Create(const AProtocol: TIOCPProtocol);
+    destructor Destroy; override;
+
+    procedure Connect(const AEndpoint: TIOCPEndpoint);
+
+    property Handle: TSocketHandle read FHandle;
+    property Protocol: TIOCPProtocol read FProtocol;
+  end;
+
 
 implementation
+
+
+{ TWSA }
+
+class constructor TWSA.ClassCreate;
+begin
+  WSAStartup(WINSOCK_VERSION, TWSA.Data);
+end;
+
+class destructor TWSA.ClassDestroy;
+begin
+  WSACleanup;
+end;
 
 
 { TIOCPBuffer }
@@ -145,6 +180,35 @@ begin
   end;
 
   Result := OverflowAlloc(ASize);
+end;
+
+
+{ TIOCPEndpoint }
+
+class constructor TIOCPEndpoint.ClassCreate;
+begin
+  Default := TIOCPEndpoint.Create('localhost', TBenchmark.CLIENT_PORT);
+end;
+
+constructor TIOCPEndpoint.Create(const AHost: string; const APort: Word);
+var
+  LAsciiStr: string;
+  LHostEnt: PHostEnt;
+  LMarshaller: TMarshaller;
+begin
+  FillChar(FSockAddr, SizeOf(FSockAddr), #0);
+  FSockAddr.sin_family := AF_INET;
+  FSockAddr.sin_port := htons(APort);
+
+  LHostEnt := nil;
+  SetLength(LAsciiStr, IdnToAscii(0, PChar(AHost), Length(AHost), nil, 0));
+  if Length(LAsciiStr) > 0 then
+  begin
+    SetLength(LAsciiStr, IdnToAscii(0, PChar(AHost), length(AHost), PChar(LAsciiStr), Length(LAsciiStr)));
+    LHostEnt := gethostbyname(LMarshaller.AsAnsi(LAsciiStr).ToPointer);
+  end;
+  if Assigned(LHostEnt) then
+    FSockAddr.sin_addr.s_addr := PCardinal(LHostEnt.h_addr_list^)^;
 end;
 
 
@@ -276,5 +340,48 @@ begin
     Result := False;
   end;
 end;
+
+
+
+
+
+{ TIOCPSocket }
+
+constructor TIOCPSocket.Create(const AProtocol: TIOCPProtocol);
+const
+  TYPES: array[TIOCPProtocol] of Integer = (SOCK_STREAM, SOCK_DGRAM);
+  PROTOCOLS: array[TIOCPProtocol] of Integer = (IPPROTO_TCP, IPPROTO_UDP);
+begin
+  inherited Create;
+  FProtocol := AProtocol;
+
+  FHandle := WSASocket(PF_INET, TYPES[AProtocol], PROTOCOLS[AProtocol], nil, 0, WSA_FLAG_OVERLAPPED);
+  if (FHandle = INVALID_SOCKET) then
+    RaiseLastOSError;
+
+  TIOCPClient.IOCP.Bind(FHandle, Pointer(Self));
+end;
+
+destructor TIOCPSocket.Destroy;
+begin
+  if (FHandle <> INVALID_SOCKET) then
+  begin
+    closesocket(FHandle);
+  end;
+
+  inherited;
+end;
+
+procedure TIOCPSocket.Connect(const AEndpoint: TIOCPEndpoint);
+var
+  LSockAddr: TSockAddrIn;
+begin
+  LSockAddr := AEndpoint.SockAddr;
+  if (Winapi.Winsock2.connect(FHandle, PSockAddr(@LSockAddr)^, SizeOf(LSockAddr)) <> 0) then
+    RaiseLastOSError;
+end;
+
+initialization
+  TWSA.Data.wVersion := TWSA.Data.wVersion;
 
 end.

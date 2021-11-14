@@ -82,8 +82,8 @@ type
     class procedure BenchmarkInit; virtual;
     class procedure BenchmarkFinal; virtual;
     class procedure BenchmarkProcess; virtual;
-    procedure DoRun; virtual; abstract;
     procedure DoInit; virtual; abstract;
+    procedure DoRun; virtual; abstract;
     procedure InternalDoneOSError(const AErrorCode: Integer);
   public
     constructor Create(const AIndex: Integer); virtual;
@@ -519,7 +519,10 @@ begin
     begin
       TBenchmark.Clients[i] := AClientClass.Create(i);
       if (i > 0) then
+      begin
         TBenchmark.Clients[i - 1].FStackNext := TBenchmark.Clients[i];
+      end;
+      TBenchmark.Clients[i].DoInit;
     end;
     TBenchmark.ClientStack.Head :=  TBenchmark.Clients[0];
     TBenchmark.ClientStack.Counter := 0;
