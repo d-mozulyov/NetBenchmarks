@@ -23,7 +23,7 @@ type
 
 { IOCP routine }
 
-  TIOCPCallback = function(const AParam: Pointer; const AErrorCode: Integer): Boolean of object;
+  TIOCPCallback = function(const AParam: Pointer; const AErrorCode: Integer; const ASize: NativeUInt): Boolean of object;
 
   PIOCPObject = ^TIOCPObject;
   TIOCPObject = object
@@ -39,6 +39,7 @@ type
     ReservedSize: Integer;
     Size: Integer;
     Tag: NativeUInt;
+    WsaBuf: TWsaBuf;
 
     procedure Reserve(const ASize: Integer);
     function Alloc(const ASize: Integer; const AAppendMode: Boolean = False): Pointer; inline;
@@ -80,7 +81,7 @@ type
   TCustomIOCPClient = class(TClient)
   protected
     class var
-      FIOCP: TIOCP;
+      FDefaultIOCP: TIOCP;
 
     class procedure BenchmarkInit; override;
     class procedure BenchmarkFinal; override;
@@ -89,12 +90,12 @@ type
     FInBuffer: TIOCPBuffer;
     FOutBuffer: TIOCPBuffer;
 
-    function InBufferCallback(const AParam: Pointer; const AErrorCode: Integer): Boolean; virtual;
-    function OutBufferCallback(const AParam: Pointer; const AErrorCode: Integer): Boolean; virtual;
+    function InBufferCallback(const AParam: Pointer; const AErrorCode: Integer; const ASize: NativeUInt): Boolean; virtual;
+    function OutBufferCallback(const AParam: Pointer; const AErrorCode: Integer; const ASize: NativeUInt): Boolean; virtual;
   public
     constructor Create(const AIndex: Integer); override;
 
-    class property IOCP: TIOCP read FIOCP;
+    class property DefaultIOCP: TIOCP read FDefaultIOCP;
     property InBuffer: TIOCPBuffer read FInBuffer;
     property OutBuffer: TIOCPBuffer read FOutBuffer;
   end;
@@ -119,14 +120,20 @@ type
         TSocketHandle = Integer;
       {$ENDIF}
   protected
+    FIOCP: TIOCP;
     FHandle: TSocketHandle;
     FProtocol: TIOCPProtocol;
   public
-    constructor Create(const AProtocol: TIOCPProtocol);
+    constructor Create(const AProtocol: TIOCPProtocol); overload;
+    constructor Create(const AIOCP: TIOCP; const AProtocol: TIOCPProtocol); overload;
     destructor Destroy; override;
 
     procedure Connect(const AEndpoint: TIOCPEndpoint);
 
+    procedure Send(var ABuffer: TIOCPBuffer);
+    procedure Read(var ABuffer: TIOCPBuffer);
+
+    property IOCP: TIOCP read FIOCP;
     property Handle: TSocketHandle read FHandle;
     property Protocol: TIOCPProtocol read FProtocol;
   end;
@@ -296,12 +303,12 @@ begin
     if GetQueuedCompletionStatus(FHandle, lpNumberOfBytesTransferred,
       ULONG_PTR(LParam), POverlapped(LIOCPObject), 0) then
     begin
-      LIOCPObject.Callback(LParam, 0);
+      LIOCPObject.Callback(LParam, 0, lpNumberOfBytesTransferred);
       Result := True;
     end else
     if Assigned(LIOCPObject) then
     begin
-      LIOCPObject.Callback(LParam, GetLastError);
+      LIOCPObject.Callback(LParam, GetLastError, lpNumberOfBytesTransferred);
       Result := True;
     end else
     begin
@@ -316,19 +323,19 @@ end;
 class procedure TCustomIOCPClient.BenchmarkInit;
 begin
   inherited;
-  TCustomIOCPClient.FIOCP := TIOCP.Create;
+  TCustomIOCPClient.FDefaultIOCP := TIOCP.Create;
 end;
 
 class procedure TCustomIOCPClient.BenchmarkFinal;
 begin
   inherited;
-  FreeAndNil(TCustomIOCPClient.FIOCP);
+  FreeAndNil(TCustomIOCPClient.FDefaultIOCP);
 end;
 
 class procedure TCustomIOCPClient.BenchmarkProcess;
 begin
   inherited;
-  TCustomIOCPClient.FIOCP.Process;
+  TCustomIOCPClient.FDefaultIOCP.Process;
 end;
 
 constructor TCustomIOCPClient.Create(const AIndex: Integer);
@@ -340,7 +347,7 @@ begin
 end;
 
 function TCustomIOCPClient.InBufferCallback(const AParam: Pointer;
-  const AErrorCode: Integer): Boolean;
+  const AErrorCode: Integer; const ASize: NativeUInt): Boolean;
 begin
   if AErrorCode = 0 then
   begin
@@ -353,7 +360,7 @@ begin
 end;
 
 function TCustomIOCPClient.OutBufferCallback(const AParam: Pointer;
-  const AErrorCode: Integer): Boolean;
+  const AErrorCode: Integer; const ASize: NativeUInt): Boolean;
 begin
   if AErrorCode = 0 then
   begin
@@ -381,18 +388,24 @@ end;
 { TIOCPSocket }
 
 constructor TIOCPSocket.Create(const AProtocol: TIOCPProtocol);
+begin
+  Create(TIOCPClient.DefaultIOCP, AProtocol);
+end;
+
+constructor TIOCPSocket.Create(const AIOCP: TIOCP; const AProtocol: TIOCPProtocol);
 const
   TYPES: array[TIOCPProtocol] of Integer = (SOCK_STREAM, SOCK_DGRAM);
   PROTOCOLS: array[TIOCPProtocol] of Integer = (IPPROTO_TCP, IPPROTO_UDP);
 begin
   inherited Create;
+  FIOCP := AIOCP;
   FProtocol := AProtocol;
 
   FHandle := WSASocket(PF_INET, TYPES[AProtocol], PROTOCOLS[AProtocol], nil, 0, WSA_FLAG_OVERLAPPED);
   if (FHandle = INVALID_SOCKET) then
     RaiseLastOSError;
 
-  TCustomIOCPClient.IOCP.Bind(FHandle, Pointer(Self));
+  FIOCP.Bind(FHandle, Pointer(Self));
 end;
 
 destructor TIOCPSocket.Destroy;
@@ -412,6 +425,16 @@ begin
   LSockAddr := AEndpoint.SockAddr;
   if (Winapi.Winsock2.connect(FHandle, PSockAddr(@LSockAddr)^, SizeOf(LSockAddr)) <> 0) then
     RaiseLastOSError;
+end;
+
+procedure TIOCPSocket.Send(var ABuffer: TIOCPBuffer);
+begin
+
+end;
+
+procedure TIOCPSocket.Read(var ABuffer: TIOCPBuffer);
+begin
+
 end;
 
 initialization

@@ -88,7 +88,7 @@ type
   public
     constructor Create(const AIndex: Integer); virtual;
     procedure Run; inline;
-    procedure Done(const AError: string);
+    procedure Done(const AError: string = '');
     procedure DoneOSError(const AErrorCode: Integer); inline;
 
     property Statistics: TStatistics read FStatistics;
@@ -130,6 +130,7 @@ type
       BLANK_RESPONSE_UTF8: UTF8String = UTF8String(BLANK_RESPONSE);
       BLANK_RESPONSE_BYTES: TBytes = [Ord('O'), Ord('K')];
       BLANK_RESPONSE_LENGHT = 2;
+      CHECK_ERRORS: array[Boolean] of string = ('Check failure', '');
     class var
       WORK_REQUEST: string;
       WORK_REQUEST_UTF8: UTF8String;
