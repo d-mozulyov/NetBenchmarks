@@ -12,13 +12,13 @@ uses
 
 
 type
-  TTcpServer = class(TIdTCPServer)
+  TTCPServer = class(TIdTCPServer)
   protected
     procedure DoGetBlank(AContext: TIdContext);
     procedure DoGetWork(AContext: TIdContext);
   end;
 
-procedure TTcpServer.DoGetBlank(AContext: TIdContext);
+procedure TTCPServer.DoGetBlank(AContext: TIdContext);
 var
   LSize: Cardinal;
   LBuffer: TBytes;
@@ -35,7 +35,7 @@ begin
   AContext.Connection.Socket.WriteDirect(TIdBytes(BLANK_RESPONSE_BYTES), LSize);
 end;
 
-procedure TTcpServer.DoGetWork(AContext: TIdContext);
+procedure TTCPServer.DoGetWork(AContext: TIdContext);
 var
   LSize: Cardinal;
   LSource, LTarget: TBytes;
@@ -52,10 +52,10 @@ end;
 
 
 var
-  Server: TTcpServer;
+  Server: TTCPServer;
 
 begin
-  Server := TTcpServer.Create(nil);
+  Server := TTCPServer.Create(nil);
   try
     LogServerListening(Server);
 

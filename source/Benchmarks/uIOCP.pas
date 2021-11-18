@@ -43,6 +43,8 @@ type
 
     procedure Reserve(const ASize: Integer);
     function Alloc(const ASize: Integer; const AAppendMode: Boolean = False): Pointer; inline;
+    procedure WriteInteger(const AValue: Integer; const AAppendMode: Boolean = False); inline;
+    procedure WriteBytes(const AValue: TBytes; const AAppendMode: Boolean = False);
   end;
 
   TIOCPProtocol = (ipTCP, ipUDP);
@@ -90,6 +92,7 @@ type
     FInBuffer: TIOCPBuffer;
     FOutBuffer: TIOCPBuffer;
 
+//    procedure DoRun; override;
     function DoCheck(const ABuffer: TIOCPBuffer): Boolean; virtual;
     function InBufferCallback(const AParam: Pointer; const AErrorCode: Integer; const ASize: NativeUInt): Boolean; virtual;
     function OutBufferCallback(const AParam: Pointer; const AErrorCode: Integer; const ASize: NativeUInt): Boolean; virtual;
@@ -182,6 +185,8 @@ begin
     begin
       SetLength(Bytes, LReservedSize);
       ReservedSize := LReservedSize;
+      WsaBuf.buf := Pointer(Bytes);
+      WsaBuf.len := LReservedSize;
     end;
   end;
 end;
@@ -211,6 +216,20 @@ begin
   end;
 
   Result := OverflowAlloc(ASize);
+end;
+
+procedure TIOCPBuffer.WriteInteger(const AValue: Integer; const AAppendMode: Boolean);
+begin
+  PInteger(Alloc(SizeOf(Integer), AAppendMode))^ := AValue;
+end;
+
+procedure TIOCPBuffer.WriteBytes(const AValue: TBytes; const AAppendMode: Boolean);
+var
+  LSize: Integer;
+begin
+  LSize := Length(AValue);
+  WriteInteger(LSize, AAppendMode);
+  Move(Pointer(AValue)^, Alloc(LSize)^, LSize);
 end;
 
 
@@ -343,9 +362,41 @@ constructor TCustomIOCPClient.Create(const AIndex: Integer);
 begin
   inherited Create(AIndex);
 
+  FInBuffer.Reserve(1024);
   FInBuffer.Callback := Self.InBufferCallback;
+  FOutBuffer.Reserve(1024);
   FOutBuffer.Callback := Self.OutBufferCallback;
 end;
+
+(*procedure TCustomIOCPClient.ASyncRead(var ABuffer: TIOCPBuffer; const ABufferSize: NativeUInt);
+begin
+
+end;
+
+procedure TCustomIOCPClient.ASyncWrite(var ABuffer: TIOCPBuffer);
+var
+  LSize: Integer;
+  LBytes: Cardinal;
+  LFlags: Cardinal;
+begin
+  LSize := ABuffer.Size;
+  if (LSize <> 0) then
+  begin
+    ABuffer.Size := 0;
+    ABuffer.WsaBuf.buf := Pointer(ABuffer.Bytes);
+    ABuffer.WsaBuf.len := LSize;
+
+
+    if (WSASend(FHandle, @ABuffer.WsaBuf, 1, LBytes, LFlags, PWSAOverlapped(LPerIoData), nil) < 0)
+    and (WSAGetLastError <> WSA_IO_PENDING) then
+  end;
+end;
+
+procedure TCustomIOCPClient.DoRun;
+begin
+  ASyncRead(FInBuffer, 1024);
+  ASyncWrite(FOutBuffer);
+end; *)
 
 function TCustomIOCPClient.DoCheck(const ABuffer: TIOCPBuffer): Boolean;
 begin
@@ -357,10 +408,11 @@ function TCustomIOCPClient.InBufferCallback(const AParam: Pointer;
 begin
   if AErrorCode = 0 then
   begin
-    FInBuffer.Size := ASize;
+    Inc(FInBuffer.Size, ASize);
 
     if (not TBenchmark.CheckMode) or DoCheck(FInBuffer) then
     begin
+      Done;
       Result := True;
     end else
     begin
@@ -441,6 +493,26 @@ begin
   if (Winapi.Winsock2.connect(FHandle, PSockAddr(@LSockAddr)^, SizeOf(LSockAddr)) <> 0) then
     RaiseLastOSError;
 end;
+
+(*
+var
+  LSize: Integer;
+  LBytes: Cardinal;
+  LFlags: Cardinal;
+begin
+  LSize := ABuffer.Size;
+  if (LSize <> 0) then
+  begin
+    ABuffer.Size := 0;
+    ABuffer.WsaBuf.buf := Pointer(ABuffer.Bytes);
+    ABuffer.WsaBuf.len := LSize;
+
+
+    if (WSASend(FHandle, @ABuffer.WsaBuf, 1, LBytes, LFlags, PWSAOverlapped(LPerIoData), nil) < 0)
+    and (WSAGetLastError <> WSA_IO_PENDING) then
+  end;
+end;
+*)
 
 procedure TIOCPSocket.Send(var ABuffer: TIOCPBuffer);
 begin

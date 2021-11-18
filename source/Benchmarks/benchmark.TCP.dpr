@@ -15,7 +15,6 @@ type
   protected
     FSocket: TIOCPSocket;
 
-    class procedure BenchmarkInit; override;
     procedure DoInit; override;
     procedure DoRun; override;
     function DoCheck(const ABuffer: TIOCPBuffer): Boolean; override;
@@ -26,12 +25,6 @@ type
 
 
 { TTCPClient }
-
-class procedure TTCPClient.BenchmarkInit;
-begin
-  inherited;
-  // ToDo
-end;
 
 constructor TTCPClient.Create(const AIndex: Integer);
 begin
@@ -48,11 +41,20 @@ end;
 procedure TTCPClient.DoInit;
 begin
   FSocket.Connect(TIOCPEndpoint.Default);
+
+  if TBenchmark.WorkMode then
+  begin
+    FOutBuffer.WriteBytes(TBenchmark.WORK_REQUEST_BYTES);
+  end else
+  begin
+    FOutBuffer.WriteBytes(TBenchmark.BLANK_REQUEST_BYTES);
+  end;
 end;
 
 procedure TTCPClient.DoRun;
 begin
-
+  FSocket.Send(FOutBuffer);
+  FSocket.Read(FInBuffer);
 end;
 
 function TTCPClient.DoCheck(const ABuffer: TIOCPBuffer): Boolean;
