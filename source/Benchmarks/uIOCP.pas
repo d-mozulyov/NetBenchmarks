@@ -90,6 +90,7 @@ type
     FInBuffer: TIOCPBuffer;
     FOutBuffer: TIOCPBuffer;
 
+    function DoCheck(const ABuffer: TIOCPBuffer): Boolean; virtual;
     function InBufferCallback(const AParam: Pointer; const AErrorCode: Integer; const ASize: NativeUInt): Boolean; virtual;
     function OutBufferCallback(const AParam: Pointer; const AErrorCode: Integer; const ASize: NativeUInt): Boolean; virtual;
   public
@@ -346,12 +347,26 @@ begin
   FOutBuffer.Callback := Self.OutBufferCallback;
 end;
 
+function TCustomIOCPClient.DoCheck(const ABuffer: TIOCPBuffer): Boolean;
+begin
+  Result := True;
+end;
+
 function TCustomIOCPClient.InBufferCallback(const AParam: Pointer;
   const AErrorCode: Integer; const ASize: NativeUInt): Boolean;
 begin
   if AErrorCode = 0 then
   begin
-    Result := True;
+    FInBuffer.Size := ASize;
+
+    if (not TBenchmark.CheckMode) or DoCheck(FInBuffer) then
+    begin
+      Result := True;
+    end else
+    begin
+      Done(TBenchmark.CHECK_ERROR);
+      Result := True;
+    end;
   end else
   begin
     DoneOSError(AErrorCode);

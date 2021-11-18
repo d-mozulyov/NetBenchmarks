@@ -130,7 +130,8 @@ type
       BLANK_RESPONSE_UTF8: UTF8String = UTF8String(BLANK_RESPONSE);
       BLANK_RESPONSE_BYTES: TBytes = [Ord('O'), Ord('K')];
       BLANK_RESPONSE_LENGHT = 2;
-      CHECK_ERRORS: array[Boolean] of string = ('Check failure', '');
+      CHECK_ERROR = 'Check failure';
+      CHECK_ERRORS: array[Boolean] of string = (CHECK_ERROR, '');
     class var
       WORK_REQUEST: string;
       WORK_REQUEST_UTF8: UTF8String;

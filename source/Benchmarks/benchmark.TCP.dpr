@@ -18,8 +18,7 @@ type
     class procedure BenchmarkInit; override;
     procedure DoInit; override;
     procedure DoRun; override;
-    function InternalCheck(const ABuffer: TIOCPBuffer): Boolean;
-    function InBufferCallback(const AParam: Pointer; const AErrorCode: Integer; const ASize: NativeUInt): Boolean; override;
+    function DoCheck(const ABuffer: TIOCPBuffer): Boolean; override;
   public
     constructor Create(const AIndex: Integer); override;
     destructor Destroy; override;
@@ -56,20 +55,11 @@ begin
 
 end;
 
-function TTCPClient.InternalCheck(const ABuffer: TIOCPBuffer): Boolean;
+function TTCPClient.DoCheck(const ABuffer: TIOCPBuffer): Boolean;
 begin
   Result := True;
 end;
 
-function TTCPClient.InBufferCallback(const AParam: Pointer; const AErrorCode: Integer; const ASize: NativeUInt): Boolean;
-begin
-  Result := inherited InBufferCallback(AParam, AErrorCode, ASize);
-  if (not Result) then
-    Exit;
-
-  Result := (not TBenchmark.CheckMode) or InternalCheck(InBuffer);
-  Done(TBenchmark.CHECK_ERRORS[Result]);
-end;
 
 begin
   TBenchmark.Run(TTCPClient);
