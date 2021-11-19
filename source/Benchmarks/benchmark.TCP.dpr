@@ -13,8 +13,6 @@ uses
 type
   TTCPClient = class(TIOCPClient)
   protected
-    FSocket: TIOCPSocket;
-
     procedure DoInit; override;
     procedure DoRun; override;
     function DoCheck(const ABuffer: TIOCPBuffer): Boolean; override;
@@ -29,19 +27,24 @@ type
 constructor TTCPClient.Create(const AIndex: Integer);
 begin
   inherited;
-  FSocket := TIOCPSocket.Create(ipTCP);
 end;
 
 destructor TTCPClient.Destroy;
 begin
-  FSocket.Free;
   inherited;
 end;
 
 procedure TTCPClient.DoInit;
+var
+  LSocket: TIOCPSocket;
 begin
-  FSocket.Connect(TIOCPEndpoint.Default);
+  inherited;
 
+  LSocket := TIOCPSocket.Create(TIOCPClient.PrimaryIOCP, ipTCP);
+  InitObjects(LSocket, True);
+  LSocket.Connect;
+
+  // out buffer initialization
   if TBenchmark.WorkMode then
   begin
     FOutBuffer.WriteBytes(TBenchmark.WORK_REQUEST_BYTES);

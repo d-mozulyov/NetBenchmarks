@@ -121,7 +121,9 @@ type
     constructor Create(const AIOCP: TIOCP; const AProtocol: TIOCPProtocol); overload;
     destructor Destroy; override;
 
-    procedure Connect(const AEndpoint: TIOCPEndpoint);
+    procedure Connect; overload; inline;
+    procedure Connect(const AEndpoint: TIOCPEndpoint); overload;
+
     procedure OverlappedWrite(var AOverlapped: TIOCPOverlapped); override;
     procedure OverlappedRead(var AOverlapped: TIOCPOverlapped); override;
 
@@ -138,9 +140,9 @@ type
   end;
 
 
-{ TCustomIOCPClient class }
+{ TIOCPClient class }
 
-  TCustomIOCPClient = class(TClient)
+  TIOCPClient = class(TClient)
   protected
     class var
       FPrimaryIOCP: TIOCP;
@@ -151,25 +153,29 @@ type
   protected
     FInBuffer: TIOCPBuffer;
     FOutBuffer: TIOCPBuffer;
+    FInObject: TIOCPObject;
+    FInObjectOwner: Boolean;
+    FOutObject: TIOCPObject;
+    FOutObjectOwner: Boolean;
 
-//    procedure DoRun; override;
-    function DoCheck(const ABuffer: TIOCPBuffer): Boolean; virtual;
+    procedure CleanupObjects; virtual;
     function InBufferCallback(const AParam: Pointer; const AErrorCode: Integer; const ASize: NativeUInt): Boolean; virtual;
     function OutBufferCallback(const AParam: Pointer; const AErrorCode: Integer; const ASize: NativeUInt): Boolean; virtual;
   public
     constructor Create(const AIndex: Integer); override;
+    destructor Destroy; override;
+
+    procedure InitObjects(const AInOutObject: TIOCPObject; const AInOutObjectOwner: Boolean); overload; inline;
+    procedure InitObjects(const AInObject: TIOCPObject; const AInObjectOwner: Boolean;
+      const AOutObject: TIOCPObject; const AOutObjectOwner: Boolean); overload;
 
     class property PrimaryIOCP: TIOCP read FPrimaryIOCP;
     property InBuffer: TIOCPBuffer read FInBuffer;
     property OutBuffer: TIOCPBuffer read FOutBuffer;
-  end;
-
-
-{ TIOCPClient class }
-
-  TIOCPClient = class(TCustomIOCPClient)
-  public
-    constructor Create(const AIndex: Integer); override;
+    property InObject: TIOCPObject read FInObject;
+    property InObjectOwner: Boolean read FInObjectOwner;
+    property OutObject: TIOCPObject read FOutObject;
+    property OutObjectOwner: Boolean read FOutObjectOwner;
   end;
 
 
@@ -438,6 +444,11 @@ begin
   inherited;
 end;
 
+procedure TIOCPSocket.Connect;
+begin
+  Connect(TIOCPEndpoint.Default);
+end;
+
 procedure TIOCPSocket.Connect(const AEndpoint: TIOCPEndpoint);
 var
   LSockAddr: TSockAddrIn;
@@ -470,49 +481,92 @@ begin
 end;
 
 
-{ TCustomIOCPClient }
+{ TIOCPClient }
 
-class procedure TCustomIOCPClient.BenchmarkInit;
+class procedure TIOCPClient.BenchmarkInit;
 begin
   inherited;
-  TCustomIOCPClient.FPrimaryIOCP := TIOCP.Create;
+  TIOCPClient.FPrimaryIOCP := TIOCP.Create;
 end;
 
-class procedure TCustomIOCPClient.BenchmarkFinal;
+class procedure TIOCPClient.BenchmarkFinal;
 begin
   inherited;
-  FreeAndNil(TCustomIOCPClient.FPrimaryIOCP);
+  FreeAndNil(TIOCPClient.FPrimaryIOCP);
 end;
 
-class procedure TCustomIOCPClient.BenchmarkProcess;
+class procedure TIOCPClient.BenchmarkProcess;
 begin
   inherited;
-  TCustomIOCPClient.FPrimaryIOCP.Process;
+  TIOCPClient.FPrimaryIOCP.Process;
 end;
 
-constructor TCustomIOCPClient.Create(const AIndex: Integer);
+constructor TIOCPClient.Create(const AIndex: Integer);
 begin
-  inherited Create(AIndex);
+  inherited;
 
   FInBuffer.Reserve(1024);
   FInBuffer.Overlapped.Callback := Self.InBufferCallback;
-  FOutBuffer.Reserve(1024);
+  FOutBuffer.Reserve(FInBuffer.ReservedSize);
   FOutBuffer.Overlapped.Callback := Self.OutBufferCallback;
+  FOutBuffer.Overlapped.Event := 1;
 end;
 
-function TCustomIOCPClient.DoCheck(const ABuffer: TIOCPBuffer): Boolean;
+destructor TIOCPClient.Destroy;
 begin
-  Result := True;
+  CleanupObjects;
+  inherited;
 end;
 
-function TCustomIOCPClient.InBufferCallback(const AParam: Pointer;
+procedure TIOCPClient.CleanupObjects;
+begin
+  if (FInObject = FOutObject) then
+  begin
+    FOutObject := nil;
+    if (FInObjectOwner) then
+      FreeAndNil(FInObject)
+    else
+      FInObject := nil;
+  end else
+  try
+    if (FInObjectOwner) then
+      FreeAndNil(FInObject)
+    else
+      FInObject := nil;
+  finally
+    if (FOutObjectOwner) then
+      FreeAndNil(FOutObject)
+    else
+      FOutObject := nil;
+  end;
+end;
+
+procedure TIOCPClient.InitObjects(const AInOutObject: TIOCPObject; const AInOutObjectOwner: Boolean);
+begin
+  InitObjects(AInOutObject, AInOutObjectOwner, AInOutObject, False);
+end;
+
+procedure TIOCPClient.InitObjects(const AInObject: TIOCPObject; const AInObjectOwner: Boolean;
+  const AOutObject: TIOCPObject; const AOutObjectOwner: Boolean);
+begin
+  try
+    CleanupObjects;
+  finally
+    FInObject := AInObject;
+    FInObjectOwner := AInObjectOwner;
+    FOutObject := AOutObject;
+    FOutObjectOwner := AOutObjectOwner;
+  end;
+end;
+
+function TIOCPClient.InBufferCallback(const AParam: Pointer;
   const AErrorCode: Integer; const ASize: NativeUInt): Boolean;
 begin
   if AErrorCode = 0 then
   begin
     Inc(FInBuffer.Size, ASize);
 
-    if (not TBenchmark.CheckMode) or DoCheck(FInBuffer) then
+    if (not TBenchmark.CheckMode) {or DoCheck(FInBuffer)} then
     begin
       Done;
       Result := True;
@@ -528,7 +582,7 @@ begin
   end;
 end;
 
-function TCustomIOCPClient.OutBufferCallback(const AParam: Pointer;
+function TIOCPClient.OutBufferCallback(const AParam: Pointer;
   const AErrorCode: Integer; const ASize: NativeUInt): Boolean;
 begin
   if AErrorCode = 0 then
@@ -539,18 +593,6 @@ begin
     DoneOSError(AErrorCode);
     Result := False;
   end;
-end;
-
-
-{ TIOCPClient }
-
-constructor TIOCPClient.Create(const AIndex: Integer);
-begin
-  inherited;
-
-  FInBuffer.Reserve(1024);
-  FOutBuffer.Reserve(FInBuffer.ReservedSize);
-  FOutBuffer.Overlapped.Event := 1;
 end;
 
 
