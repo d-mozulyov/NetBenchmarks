@@ -53,8 +53,8 @@ end;
 
 procedure TTCPClient.DoRun;
 begin
-  FSocket.Send(FOutBuffer);
-  FSocket.Read(FInBuffer);
+  //FSocket.Send(FOutBuffer);
+  //FSocket.Read(FInBuffer);
 end;
 
 function TTCPClient.DoCheck(const ABuffer: TIOCPBuffer): Boolean;

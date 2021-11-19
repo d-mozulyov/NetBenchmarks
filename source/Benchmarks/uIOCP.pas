@@ -25,21 +25,26 @@ type
 
   TIOCPCallback = function(const AParam: Pointer; const AErrorCode: Integer; const ASize: NativeUInt): Boolean of object;
 
-  PIOCPObject = ^TIOCPObject;
-  TIOCPObject = object
-    Overlapped: TOverlapped;
+  PIOCPOverlapped = ^TIOCPOverlapped;
+  TIOCPOverlapped = object
+    Internal: TOverlapped;
+    InternalBuf: TWsaBuf;
     Callback: TIOCPCallback;
+
+    property Event: THandle read Internal.hEvent write Internal.hEvent;
+    property Ptr: MarshaledAString read InternalBuf.buf write InternalBuf.buf;
+    property Size: u_long read InternalBuf.len write InternalBuf.len;
   end;
 
-  TIOCPBuffer = object(TIOCPObject)
+  TIOCPBuffer = object
   private
     function OverflowAlloc(const ASize: Integer): Pointer;
   public
+    Overlapped: TIOCPOverlapped;
     Bytes: TBytes;
     ReservedSize: Integer;
     Size: Integer;
     Tag: NativeUInt;
-    WsaBuf: TWsaBuf;
 
     procedure Reserve(const ASize: Integer);
     function Alloc(const ASize: Integer; const AAppendMode: Boolean = False): Pointer; inline;
@@ -78,12 +83,67 @@ type
   end;
 
 
+{ TIOCPObject = class }
+
+  TIOCPObject = class
+  protected
+    FIOCP: TIOCP;
+    FHandle: THandle;
+    FHandleOwner: Boolean;
+  public
+    constructor Create(const AIOCP: TIOCP; const AHandle: THandle; const AHandleOwner: Boolean);
+    destructor Destroy; override;
+
+    procedure OverlappedWrite(var AOverlapped: TIOCPOverlapped); overload; virtual; abstract;
+    procedure OverlappedRead(var AOverlapped: TIOCPOverlapped); overload; virtual; abstract;
+    procedure OverlappedWrite(var ABuffer: TIOCPBuffer); overload;
+    procedure OverlappedRead(var ABuffer: TIOCPBuffer); overload;
+
+    property IOCP: TIOCP read FIOCP;
+    property Handle: THandle read FHandle;
+  end;
+
+
+{ TIOCPSocket class }
+
+  TIOCPSocket = class(TIOCPObject)
+  public
+    type
+      {$ifdef MSWINDOWS}
+        TSocketHandle = Winapi.WinSock2.TSocket;
+      {$else .POSIX}
+        TSocketHandle = Cardinal;
+      {$ENDIF}
+  protected
+    FProtocol: TIOCPProtocol;
+  public
+    constructor Create(const AProtocol: TIOCPProtocol); overload;
+    constructor Create(const AIOCP: TIOCP; const AProtocol: TIOCPProtocol); overload;
+    destructor Destroy; override;
+
+    procedure Connect(const AEndpoint: TIOCPEndpoint);
+    procedure OverlappedWrite(var AOverlapped: TIOCPOverlapped); override;
+    procedure OverlappedRead(var AOverlapped: TIOCPOverlapped); override;
+
+    property Protocol: TIOCPProtocol read FProtocol;
+  end;
+
+
+{ TIOCPPipe class }
+
+  TIOCPPipe = class(TIOCPObject)
+  protected
+  public
+    // ToDo
+  end;
+
+
 { TCustomIOCPClient class }
 
   TCustomIOCPClient = class(TClient)
   protected
     class var
-      FDefaultIOCP: TIOCP;
+      FPrimaryIOCP: TIOCP;
 
     class procedure BenchmarkInit; override;
     class procedure BenchmarkFinal; override;
@@ -99,7 +159,7 @@ type
   public
     constructor Create(const AIndex: Integer); override;
 
-    class property DefaultIOCP: TIOCP read FDefaultIOCP;
+    class property PrimaryIOCP: TIOCP read FPrimaryIOCP;
     property InBuffer: TIOCPBuffer read FInBuffer;
     property OutBuffer: TIOCPBuffer read FOutBuffer;
   end;
@@ -110,36 +170,6 @@ type
   TIOCPClient = class(TCustomIOCPClient)
   public
     constructor Create(const AIndex: Integer); override;
-  end;
-
-
-{ TIOCPSocket class }
-
-  TIOCPSocket = class
-  public
-    type
-      {$ifdef MSWINDOWS}
-        TSocketHandle = Winapi.WinSock2.TSocket;
-      {$else .POSIX}
-        TSocketHandle = Integer;
-      {$ENDIF}
-  protected
-    FIOCP: TIOCP;
-    FHandle: TSocketHandle;
-    FProtocol: TIOCPProtocol;
-  public
-    constructor Create(const AProtocol: TIOCPProtocol); overload;
-    constructor Create(const AIOCP: TIOCP; const AProtocol: TIOCPProtocol); overload;
-    destructor Destroy; override;
-
-    procedure Connect(const AEndpoint: TIOCPEndpoint);
-
-    procedure Send(var ABuffer: TIOCPBuffer);
-    procedure Read(var ABuffer: TIOCPBuffer);
-
-    property IOCP: TIOCP read FIOCP;
-    property Handle: TSocketHandle read FHandle;
-    property Protocol: TIOCPProtocol read FProtocol;
   end;
 
 
@@ -185,8 +215,6 @@ begin
     begin
       SetLength(Bytes, LReservedSize);
       ReservedSize := LReservedSize;
-      WsaBuf.buf := Pointer(Bytes);
-      WsaBuf.len := LReservedSize;
     end;
   end;
 end;
@@ -315,20 +343,20 @@ function TIOCP.Process: Boolean;
 var
   lpNumberOfBytesTransferred: DWORD;
   LParam: Pointer;
-  LIOCPObject: PIOCPObject;
+  LIOCPOverlapped: PIOCPOverlapped;
 begin
   Result := False;
 
   repeat
     if GetQueuedCompletionStatus(FHandle, lpNumberOfBytesTransferred,
-      ULONG_PTR(LParam), POverlapped(LIOCPObject), 0) then
+      ULONG_PTR(LParam), POverlapped(LIOCPOverlapped), 0) then
     begin
-      LIOCPObject.Callback(LParam, 0, lpNumberOfBytesTransferred);
+      LIOCPOverlapped.Callback(LParam, 0, lpNumberOfBytesTransferred);
       Result := True;
     end else
-    if Assigned(LIOCPObject) then
+    if Assigned(LIOCPOverlapped) then
     begin
-      LIOCPObject.Callback(LParam, GetLastError, lpNumberOfBytesTransferred);
+      LIOCPOverlapped.Callback(LParam, GetLastError, lpNumberOfBytesTransferred);
       Result := True;
     end else
     begin
@@ -338,24 +366,128 @@ begin
 end;
 
 
+{ TIOCPObject }
+
+constructor TIOCPObject.Create(const AIOCP: TIOCP; const AHandle: THandle; const AHandleOwner: Boolean);
+begin
+  inherited Create;
+
+  FIOCP := AIOCP;
+  FHandle := AHandle;
+  FHandleOwner := AHandleOwner;
+
+  FIOCP.Bind(FHandle, Pointer(Self));
+end;
+
+destructor TIOCPObject.Destroy;
+begin
+  if FHandleOwner and (FHandle <> 0) and (FHandle <> INVALID_HANDLE_VALUE) then
+  begin
+    if not CloseHandle(FHandle) then
+      RaiseLastOSError;
+  end;
+
+  inherited;
+end;
+
+procedure TIOCPObject.OverlappedWrite(var ABuffer: TIOCPBuffer);
+begin
+  // ToDo
+end;
+
+procedure TIOCPObject.OverlappedRead(var ABuffer: TIOCPBuffer);
+begin
+  // ToDo
+end;
+
+
+{ TIOCPSocket }
+
+constructor TIOCPSocket.Create(const AProtocol: TIOCPProtocol);
+begin
+  Create(TIOCPClient.PrimaryIOCP, AProtocol);
+end;
+
+constructor TIOCPSocket.Create(const AIOCP: TIOCP; const AProtocol: TIOCPProtocol);
+const
+  TYPES: array[TIOCPProtocol] of Integer = (SOCK_STREAM, SOCK_DGRAM);
+  PROTOCOLS: array[TIOCPProtocol] of Integer = (IPPROTO_TCP, IPPROTO_UDP);
+var
+  LHandle: TSocketHandle;
+begin
+  FProtocol := AProtocol;
+
+  LHandle := WSASocket(PF_INET, TYPES[AProtocol], PROTOCOLS[AProtocol], nil, 0, WSA_FLAG_OVERLAPPED);
+  if (LHandle = TSocketHandle(INVALID_SOCKET)) then
+    RaiseLastOSError;
+
+  inherited Create(AIOCP, LHandle, True);;
+end;
+
+destructor TIOCPSocket.Destroy;
+var
+  LHandle: TSocketHandle;
+begin
+  LHandle := TSocketHandle(FHandle);
+  FHandle := 0;
+  if (FHandleOwner) and (LHandle <> 0) and (LHandle <> INVALID_SOCKET) then
+  begin
+    closesocket(LHandle);
+  end;
+
+  inherited;
+end;
+
+procedure TIOCPSocket.Connect(const AEndpoint: TIOCPEndpoint);
+var
+  LSockAddr: TSockAddrIn;
+begin
+  LSockAddr := AEndpoint.SockAddr;
+  if (Winapi.Winsock2.connect(FHandle, PSockAddr(@LSockAddr)^, SizeOf(LSockAddr)) <> 0) then
+    RaiseLastOSError;
+end;
+
+procedure TIOCPSocket.OverlappedWrite(var AOverlapped: TIOCPOverlapped);
+var
+  LBytes, LFlags: Cardinal;
+begin
+  LFlags := 0;
+  LBytes := 0;
+  if (WSASend(FHandle, @AOverlapped.InternalBuf, 1, LBytes, LFlags, PWSAOverlapped(@AOverlapped.Internal), nil) < 0)
+    and (WSAGetLastError <> WSA_IO_PENDING) then
+    RaiseLastOSError;
+end;
+
+procedure TIOCPSocket.OverlappedRead(var AOverlapped: TIOCPOverlapped);
+var
+  LBytes, LFlags: Cardinal;
+begin
+  LFlags := 0;
+  LBytes := 0;
+  if (WSARecv(FHandle, @AOverlapped.InternalBuf, 1, LBytes, LFlags, PWSAOverlapped(@AOverlapped.Internal), nil) < 0)
+    and (WSAGetLastError <> WSA_IO_PENDING) then
+    RaiseLastOSError;
+end;
+
+
 { TCustomIOCPClient }
 
 class procedure TCustomIOCPClient.BenchmarkInit;
 begin
   inherited;
-  TCustomIOCPClient.FDefaultIOCP := TIOCP.Create;
+  TCustomIOCPClient.FPrimaryIOCP := TIOCP.Create;
 end;
 
 class procedure TCustomIOCPClient.BenchmarkFinal;
 begin
   inherited;
-  FreeAndNil(TCustomIOCPClient.FDefaultIOCP);
+  FreeAndNil(TCustomIOCPClient.FPrimaryIOCP);
 end;
 
 class procedure TCustomIOCPClient.BenchmarkProcess;
 begin
   inherited;
-  TCustomIOCPClient.FDefaultIOCP.Process;
+  TCustomIOCPClient.FPrimaryIOCP.Process;
 end;
 
 constructor TCustomIOCPClient.Create(const AIndex: Integer);
@@ -363,40 +495,10 @@ begin
   inherited Create(AIndex);
 
   FInBuffer.Reserve(1024);
-  FInBuffer.Callback := Self.InBufferCallback;
+  FInBuffer.Overlapped.Callback := Self.InBufferCallback;
   FOutBuffer.Reserve(1024);
-  FOutBuffer.Callback := Self.OutBufferCallback;
+  FOutBuffer.Overlapped.Callback := Self.OutBufferCallback;
 end;
-
-(*procedure TCustomIOCPClient.ASyncRead(var ABuffer: TIOCPBuffer; const ABufferSize: NativeUInt);
-begin
-
-end;
-
-procedure TCustomIOCPClient.ASyncWrite(var ABuffer: TIOCPBuffer);
-var
-  LSize: Integer;
-  LBytes: Cardinal;
-  LFlags: Cardinal;
-begin
-  LSize := ABuffer.Size;
-  if (LSize <> 0) then
-  begin
-    ABuffer.Size := 0;
-    ABuffer.WsaBuf.buf := Pointer(ABuffer.Bytes);
-    ABuffer.WsaBuf.len := LSize;
-
-
-    if (WSASend(FHandle, @ABuffer.WsaBuf, 1, LBytes, LFlags, PWSAOverlapped(LPerIoData), nil) < 0)
-    and (WSAGetLastError <> WSA_IO_PENDING) then
-  end;
-end;
-
-procedure TCustomIOCPClient.DoRun;
-begin
-  ASyncRead(FInBuffer, 1024);
-  ASyncWrite(FOutBuffer);
-end; *)
 
 function TCustomIOCPClient.DoCheck(const ABuffer: TIOCPBuffer): Boolean;
 begin
@@ -448,81 +550,9 @@ begin
 
   FInBuffer.Reserve(1024);
   FOutBuffer.Reserve(FInBuffer.ReservedSize);
-  FOutBuffer.Overlapped.hEvent := 1;
+  FOutBuffer.Overlapped.Event := 1;
 end;
 
-
-{ TIOCPSocket }
-
-constructor TIOCPSocket.Create(const AProtocol: TIOCPProtocol);
-begin
-  Create(TIOCPClient.DefaultIOCP, AProtocol);
-end;
-
-constructor TIOCPSocket.Create(const AIOCP: TIOCP; const AProtocol: TIOCPProtocol);
-const
-  TYPES: array[TIOCPProtocol] of Integer = (SOCK_STREAM, SOCK_DGRAM);
-  PROTOCOLS: array[TIOCPProtocol] of Integer = (IPPROTO_TCP, IPPROTO_UDP);
-begin
-  inherited Create;
-  FIOCP := AIOCP;
-  FProtocol := AProtocol;
-
-  FHandle := WSASocket(PF_INET, TYPES[AProtocol], PROTOCOLS[AProtocol], nil, 0, WSA_FLAG_OVERLAPPED);
-  if (FHandle = INVALID_SOCKET) then
-    RaiseLastOSError;
-
-  FIOCP.Bind(FHandle, Pointer(Self));
-end;
-
-destructor TIOCPSocket.Destroy;
-begin
-  if (FHandle <> INVALID_SOCKET) then
-  begin
-    closesocket(FHandle);
-  end;
-
-  inherited;
-end;
-
-procedure TIOCPSocket.Connect(const AEndpoint: TIOCPEndpoint);
-var
-  LSockAddr: TSockAddrIn;
-begin
-  LSockAddr := AEndpoint.SockAddr;
-  if (Winapi.Winsock2.connect(FHandle, PSockAddr(@LSockAddr)^, SizeOf(LSockAddr)) <> 0) then
-    RaiseLastOSError;
-end;
-
-(*
-var
-  LSize: Integer;
-  LBytes: Cardinal;
-  LFlags: Cardinal;
-begin
-  LSize := ABuffer.Size;
-  if (LSize <> 0) then
-  begin
-    ABuffer.Size := 0;
-    ABuffer.WsaBuf.buf := Pointer(ABuffer.Bytes);
-    ABuffer.WsaBuf.len := LSize;
-
-
-    if (WSASend(FHandle, @ABuffer.WsaBuf, 1, LBytes, LFlags, PWSAOverlapped(LPerIoData), nil) < 0)
-    and (WSAGetLastError <> WSA_IO_PENDING) then
-  end;
-end;
-*)
-
-procedure TIOCPSocket.Send(var ABuffer: TIOCPBuffer);
-begin
-
-end;
-
-procedure TIOCPSocket.Read(var ABuffer: TIOCPBuffer);
-begin
-
-end;
 
 initialization
   TWSA.Data.wVersion := TWSA.Data.wVersion;
