@@ -21,6 +21,7 @@ type
       InSocket: TIOCPSocket;
       GCTimestamp: Cardinal;
 
+    class function BenchmarkDefaultOutMessage: TBytes; override;
     class procedure BenchmarkInit; override;
     class procedure BenchmarkFinal; override;
     class procedure BenchmarkProcess; override;
@@ -36,6 +37,22 @@ type
 
 
 { TUDPClient }
+
+class function TUDPClient.BenchmarkDefaultOutMessage: TBytes;
+begin
+  SetLength(Result, SizeOf(Integer) + SizeOf(Integer));
+
+  if TBenchmark.WorkMode then
+  begin
+    Result := Result + TBenchmark.WORK_REQUEST_BYTES;
+  end else
+  begin
+    Result := Result + TBenchmark.BLANK_REQUEST_BYTES;
+  end;
+
+  PInteger(Result)^ := -1;
+  PInteger(@Result[SizeOf(Integer)])^ := Length(Result) - SizeOf(Integer) - SizeOf(Integer);
+end;
 
 class procedure TUDPClient.BenchmarkInit;
 begin
@@ -75,16 +92,8 @@ begin
   LOutSocket := TIOCPSocket.Create(TIOCPClient.PrimaryIOCP, ipUDP);
   InitObjects(TUDPClient.InSocket, False, LOutSocket, False);
   LOutSocket.Connect;
-
-  // out buffer initialization
-  FOutBuffer.Alloc(SizeOf(Integer));
-  if TBenchmark.WorkMode then
-  begin
-    FOutBuffer.WriteBytes(TBenchmark.WORK_REQUEST_BYTES);
-  end else
-  begin
-    FOutBuffer.WriteBytes(TBenchmark.BLANK_REQUEST_BYTES);
-  end;
+  
+  FOutBuffer.Bytes := Copy(FOutBuffer.Bytes, Low(FOutBuffer.Bytes), High(FOutBuffer.Bytes));
 end;
 
 procedure TUDPClient.DoRun;

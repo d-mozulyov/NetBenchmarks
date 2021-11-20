@@ -8,7 +8,9 @@ uses
   {$else}
     {$MESSAGE ERROR 'Platform not yet supported'}
   {$endif}
-  uBenchmarks;
+  uBenchmarks,
+  System.SysUtils;
+  
 
 type
   TWebSocketClient = class(TClient)

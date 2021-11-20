@@ -146,7 +146,9 @@ type
   protected
     class var
       FPrimaryIOCP: TIOCP;
+      FDefaultOutMessage: TBytes;
 
+    class function BenchmarkDefaultOutMessage: TBytes; virtual;
     class procedure BenchmarkInit; override;
     class procedure BenchmarkFinal; override;
     class procedure BenchmarkProcess; override;
@@ -170,6 +172,7 @@ type
       const AOutObject: TIOCPObject; const AOutObjectOwner: Boolean); overload;
 
     class property PrimaryIOCP: TIOCP read FPrimaryIOCP;
+    class property DefaultOutMessage: TBytes read FDefaultOutMessage;
     property InBuffer: TIOCPBuffer read FInBuffer;
     property OutBuffer: TIOCPBuffer read FOutBuffer;
     property InObject: TIOCPObject read FInObject;
@@ -483,16 +486,23 @@ end;
 
 { TIOCPClient }
 
+class function TIOCPClient.BenchmarkDefaultOutMessage: TBytes;
+begin
+  Result := nil;
+end;
+
 class procedure TIOCPClient.BenchmarkInit;
 begin
   inherited;
   TIOCPClient.FPrimaryIOCP := TIOCP.Create;
+  TIOCPClient.FDefaultOutMessage := BenchmarkDefaultOutMessage;
 end;
 
 class procedure TIOCPClient.BenchmarkFinal;
 begin
   inherited;
   FreeAndNil(TIOCPClient.FPrimaryIOCP);
+  TIOCPClient.FDefaultOutMessage := nil;
 end;
 
 class procedure TIOCPClient.BenchmarkProcess;
@@ -505,11 +515,22 @@ constructor TIOCPClient.Create(const AIndex: Integer);
 begin
   inherited;
 
-  FInBuffer.Reserve(1024);
   FInBuffer.Overlapped.Callback := Self.InBufferCallback;
-  FOutBuffer.Reserve(FInBuffer.ReservedSize);
+  FInBuffer.Reserve(1024);
+
   FOutBuffer.Overlapped.Callback := Self.OutBufferCallback;
   FOutBuffer.Overlapped.Event := 1;
+  if Assigned(TIOCPClient.FDefaultOutMessage) then
+  begin
+    FOutBuffer.Bytes := TIOCPClient.FDefaultOutMessage;
+    FOutBuffer.ReservedSize := Length(FOutBuffer.Bytes);
+    FOutBuffer.Size := FOutBuffer.ReservedSize;
+  end else
+  begin
+    FOutBuffer.Reserve(FInBuffer.ReservedSize);
+  end;
+  FOutBuffer.Overlapped.InternalBuf.buf := Pointer(FOutBuffer.Bytes);
+  FOutBuffer.Overlapped.InternalBuf.len := FOutBuffer.Size;
 end;
 
 destructor TIOCPClient.Destroy;

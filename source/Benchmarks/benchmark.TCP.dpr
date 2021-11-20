@@ -8,30 +8,36 @@ uses
   {$else}
     {$MESSAGE ERROR 'Platform not yet supported'}
   {$endif}
-  uBenchmarks;
+  uBenchmarks,
+  System.SysUtils;
 
 type
   TTCPClient = class(TIOCPClient)
   protected
+    class function BenchmarkDefaultOutMessage: TBytes; override;
     procedure DoInit; override;
     procedure DoRun; override;
-    function DoCheck(const ABuffer: TIOCPBuffer): Boolean; override;
+//    function DoCheck(const ABuffer: TIOCPBuffer): Boolean; override;
   public
-    constructor Create(const AIndex: Integer); override;
-    destructor Destroy; override;
+
   end;
 
 
 { TTCPClient }
 
-constructor TTCPClient.Create(const AIndex: Integer);
+class function TTCPClient.BenchmarkDefaultOutMessage: TBytes;
 begin
-  inherited;
-end;
+  SetLength(Result, SizeOf(Integer));
 
-destructor TTCPClient.Destroy;
-begin
-  inherited;
+  if TBenchmark.WorkMode then
+  begin
+    Result := Result + TBenchmark.WORK_REQUEST_BYTES;
+  end else
+  begin
+    Result := Result + TBenchmark.BLANK_REQUEST_BYTES;
+  end;
+
+  PInteger(Result)^ := Length(Result) - SizeOf(Integer);
 end;
 
 procedure TTCPClient.DoInit;
@@ -43,15 +49,6 @@ begin
   LSocket := TIOCPSocket.Create(TIOCPClient.PrimaryIOCP, ipTCP);
   InitObjects(LSocket, True);
   LSocket.Connect;
-
-  // out buffer initialization
-  if TBenchmark.WorkMode then
-  begin
-    FOutBuffer.WriteBytes(TBenchmark.WORK_REQUEST_BYTES);
-  end else
-  begin
-    FOutBuffer.WriteBytes(TBenchmark.BLANK_REQUEST_BYTES);
-  end;
 end;
 
 procedure TTCPClient.DoRun;
@@ -60,10 +57,10 @@ begin
   //FSocket.Read(FInBuffer);
 end;
 
-function TTCPClient.DoCheck(const ABuffer: TIOCPBuffer): Boolean;
+{function TTCPClient.DoCheck(const ABuffer: TIOCPBuffer): Boolean;
 begin
   Result := True;
-end;
+end;}
 
 
 begin
