@@ -29,6 +29,8 @@ type
   TIOCPOverlapped = object
     Internal: TOverlapped;
     InternalBuf: TWsaBuf;
+    InternalSize: Cardinal;
+    InternalFlags: Cardinal;
     Callback: TIOCPCallback;
 
     property Event: THandle read Internal.hEvent write Internal.hEvent;
@@ -56,14 +58,14 @@ type
 
   TIOCPEndpoint = record
   private
-    FSockAddr: TSockAddrIn;
+    class var
+      FDefault: TIOCPEndpoint;
     class constructor ClassCreate;
   public
-    class var
-      Default: TIOCPEndpoint;
+    SockAddr: TSockAddrIn;
 
     constructor Create(const AHost: string; const APort: Word);
-    property SockAddr: TSockAddrIn read FSockAddr;
+    class property Default: TIOCPEndpoint read FDefault;
   end;
 
   TIOCP = class
@@ -284,7 +286,7 @@ end;
 
 class constructor TIOCPEndpoint.ClassCreate;
 begin
-  Default := TIOCPEndpoint.Create('localhost', TBenchmark.CLIENT_PORT);
+  FDefault := TIOCPEndpoint.Create('localhost', TBenchmark.CLIENT_PORT);
 end;
 
 constructor TIOCPEndpoint.Create(const AHost: string; const APort: Word);
@@ -293,9 +295,9 @@ var
   LAnsiStr: AnsiString;
   LHostEnt: PHostEnt;
 begin
-  FillChar(FSockAddr, SizeOf(FSockAddr), #0);
-  FSockAddr.sin_family := AF_INET;
-  FSockAddr.sin_port := htons(APort);
+  FillChar(SockAddr, SizeOf(SockAddr), #0);
+  SockAddr.sin_family := AF_INET;
+  SockAddr.sin_port := htons(APort);
 
   LHostEnt := nil;
   SetLength(LAsciiStr, IdnToAscii(0, PChar(AHost), Length(AHost), nil, 0));
@@ -306,7 +308,7 @@ begin
     LHostEnt := gethostbyname(Pointer(LAnsiStr));
   end;
   if Assigned(LHostEnt) then
-    FSockAddr.sin_addr.s_addr := PCardinal(LHostEnt.h_addr_list^)^;
+    SockAddr.sin_addr.s_addr := PCardinal(LHostEnt.h_addr_list^)^;
 end;
 
 
@@ -433,6 +435,7 @@ const
   PROTOCOLS: array[TIOCPProtocol] of Integer = (IPPROTO_TCP, IPPROTO_UDP);
 var
   LHandle: TSocketHandle;
+  LFlag: Cardinal;
 begin
   FProtocol := AProtocol;
 
@@ -440,7 +443,11 @@ begin
   if (LHandle = TSocketHandle(INVALID_SOCKET)) then
     RaiseLastOSError;
 
-  inherited Create(AIOCP, LHandle, True);;
+  inherited Create(AIOCP, LHandle, True);
+
+  LFlag := 0;
+  if ioctlsocket(LHandle, Integer(FIONBIO), LFlag) <> 0 then
+    RaiseLastOSError;
 end;
 
 destructor TIOCPSocket.Destroy;
@@ -463,17 +470,14 @@ var
   LTemp: Cardinal;
 begin
   LCode := WSAIoctl(TSocketHandle(FHandle), SIO_GET_EXTENSION_FUNCTION_POINTER,
-    @AId, SizeOf( TGUID), @AFunc, SizeOf(Pointer), LTemp, nil, nil);
+    @AId, SizeOf(AId), @AFunc, SizeOf(Pointer), LTemp, nil, nil);
   if (LCode <> 0) then
     RaiseLastOSError;
 end;
 
 procedure TIOCPSocket.Connect(const AEndpoint: TIOCPEndpoint);
-var
-  LSockAddr: TSockAddrIn;
 begin
-  LSockAddr := AEndpoint.SockAddr;
-  if (Winapi.Winsock2.connect(FHandle, PSockAddr(@LSockAddr)^, SizeOf(LSockAddr)) <> 0) then
+  if (Winapi.Winsock2.connect(FHandle, PSockAddr(@AEndpoint.SockAddr)^, SizeOf(AEndpoint.SockAddr)) <> 0) then
     RaiseLastOSError;
 end;
 
@@ -483,26 +487,20 @@ begin
 end;
 
 procedure TIOCPSocket.OverlappedWrite(var AOverlapped: TIOCPOverlapped);
-var
-  LBytes, LFlags: Cardinal;
 begin
-  LFlags := 0;
-  LBytes := 0;
-  if (WSASend(FHandle, @AOverlapped.InternalBuf, 1, LBytes, LFlags, PWSAOverlapped(@AOverlapped.Internal), nil) < 0)
-    and (WSAGetLastError <> WSA_IO_PENDING) then
+  if (WSASend(FHandle, @AOverlapped.InternalBuf, 1, AOverlapped.InternalSize, 0,
+    PWSAOverlapped(@AOverlapped.Internal), nil) < 0) and (WSAGetLastError <> WSA_IO_PENDING) then
     RaiseLastOSError;
 end;
 
 procedure TIOCPSocket.OverlappedRead(var AOverlapped: TIOCPOverlapped);
-var
-  LBytes, LFlags: Cardinal;
 begin
-  LFlags := 0;
-  LBytes := 0;
-  if (WSARecv(FHandle, @AOverlapped.InternalBuf, 1, LBytes, LFlags, PWSAOverlapped(@AOverlapped.Internal), nil) < 0)
-    and (WSAGetLastError <> WSA_IO_PENDING) then
+  AOverlapped.InternalFlags := 0;
+  if (WSARecv(FHandle, @AOverlapped.InternalBuf, 1, AOverlapped.InternalSize, AOverlapped.InternalFlags,
+    PWSAOverlapped(@AOverlapped.Internal), nil) < 0) and (WSAGetLastError <> WSA_IO_PENDING) then
     RaiseLastOSError;
 end;
+
 
 
 { TIOCPClient }
@@ -538,6 +536,8 @@ begin
 
   FInBuffer.Overlapped.Callback := Self.InBufferCallback;
   FInBuffer.Reserve(1024);
+  FInBuffer.Overlapped.InternalBuf.buf := Pointer(FInBuffer.Bytes);
+  FInBuffer.Overlapped.InternalBuf.len := FInBuffer.ReservedSize;
 
   FOutBuffer.Overlapped.Callback := Self.OutBufferCallback;
   FOutBuffer.Overlapped.Event := 1;
