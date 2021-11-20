@@ -114,15 +114,25 @@ type
       {$else .POSIX}
         TSocketHandle = Cardinal;
       {$ENDIF}
+      TIocpAcceptEx = function(sListenSocket, sAccepTSocketHandle: TSocketHandle; lpOutputBuffer: Pointer; dwReceiveDataLength, dwLocalAddressLength, dwRemoteAddressLength: DWORD; var lpdwBytesReceived: DWORD; lpOverlapped: POverlapped): BOOL; stdcall;
+      TIocpConnectEx = function(const s: TSocketHandle; const name: PSockAddr; const namelen: Integer; lpSendBuffer: Pointer; dwSendDataLength: DWORD; var lpdwBytesSent: DWORD; lpOverlapped: POverlapped): BOOL; stdcall;
+      TIocpGetAcceptExSockAddrs = procedure(lpOutputBuffer: Pointer; dwReceiveDataLength, dwLocalAddressLength, dwRemoteAddressLength: DWORD; var LocalSockaddr: PSockAddr; var LocalSockaddrLength: Integer; var RemoteSockaddr: PSockAddr; var RemoteSockaddrLength: Integer); stdcall;
+      TIocpDisconnectEx = function(const hSocket: TSocketHandle; lpOverlapped: POverlapped; const dwFlags: DWORD; const dwReserved: DWORD): BOOL; stdcall;
+    const
+      WSAID_ACCEPTEX: TGUID = (D1: $b5367df1; D2: $cbac; D3: $11cf; D4: ($95, $ca, $00, $80, $5f, $48, $a1, $92));
+      WSAID_CONNECTEX: TGUID = (D1: $25a207b9; D2: $ddf3; D3: $4660; D4: ($8e, $e9, $76, $e5, $8c, $74, $06, $3e));
+      WSAID_GETACCEPTEXSOCKADDRS: TGUID = (D1: $b5367df2; D2: $cbac; D3: $11cf; D4: ($95, $ca, $00, $80, $5f, $48, $a1, $92));
+      WSAID_DISCONNECTEX: TGUID = (D1: $7fda2e11; D2: $8630; D3: $436f; D4: ($a0, $31, $f5, $36, $a6, $ee, $c1, $57));
   protected
     FProtocol: TIOCPProtocol;
   public
     constructor Create(const AProtocol: TIOCPProtocol); overload;
     constructor Create(const AIOCP: TIOCP; const AProtocol: TIOCPProtocol); overload;
     destructor Destroy; override;
+    procedure GetExtensionFunc(var AFunc; const AId: TGUID);
 
-    procedure Connect; overload; inline;
     procedure Connect(const AEndpoint: TIOCPEndpoint); overload;
+    procedure Connect; overload; inline;
 
     procedure OverlappedWrite(var AOverlapped: TIOCPOverlapped); override;
     procedure OverlappedRead(var AOverlapped: TIOCPOverlapped); override;
@@ -447,9 +457,15 @@ begin
   inherited;
 end;
 
-procedure TIOCPSocket.Connect;
+procedure TIOCPSocket.GetExtensionFunc(var AFunc; const AId: TGUID);
+var
+  LCode: Integer;
+  LTemp: Cardinal;
 begin
-  Connect(TIOCPEndpoint.Default);
+  LCode := WSAIoctl(TSocketHandle(FHandle), SIO_GET_EXTENSION_FUNCTION_POINTER,
+    @AId, SizeOf( TGUID), @AFunc, SizeOf(Pointer), LTemp, nil, nil);
+  if (LCode <> 0) then
+    RaiseLastOSError;
 end;
 
 procedure TIOCPSocket.Connect(const AEndpoint: TIOCPEndpoint);
@@ -459,6 +475,11 @@ begin
   LSockAddr := AEndpoint.SockAddr;
   if (Winapi.Winsock2.connect(FHandle, PSockAddr(@LSockAddr)^, SizeOf(LSockAddr)) <> 0) then
     RaiseLastOSError;
+end;
+
+procedure TIOCPSocket.Connect;
+begin
+  Connect(TIOCPEndpoint.Default);
 end;
 
 procedure TIOCPSocket.OverlappedWrite(var AOverlapped: TIOCPOverlapped);

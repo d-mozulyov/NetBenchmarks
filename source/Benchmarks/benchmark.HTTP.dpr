@@ -15,6 +15,9 @@ uses
 type
   THttpClient = class(TIOCPClient)
   protected
+    FIocpConnectEx: TIOCPSocket.TIocpConnectEx;
+    FIocpDisconnectEx: TIOCPSocket.TIocpDisconnectEx;
+
     class function BenchmarkDefaultOutMessage: TBytes; override;
     procedure DoInit; override;
     procedure DoRun; override;
@@ -51,6 +54,9 @@ begin
 
   LSocket := TIOCPSocket.Create(TIOCPClient.PrimaryIOCP, ipTCP);
   InitObjects(LSocket, True);
+
+  LSocket.GetExtensionFunc(FIocpConnectEx, TIOCPSocket.WSAID_CONNECTEX);
+  LSocket.GetExtensionFunc(FIocpDisconnectEx, TIOCPSocket.WSAID_DISCONNECTEX);
 end;
 
 procedure THttpClient.DoRun;
