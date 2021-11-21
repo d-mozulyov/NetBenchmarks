@@ -59,13 +59,14 @@ begin
  // if setsockopt(LSocket.Handle, SOL_SOCKET, $7010{SO_UPDATE_CONNECT_CONTEXT}, nil, 0) <> 0 then
  //   RaiseLastOSError;
 
-  FInBuffer.Overlapped.Event := 0;
+  //FInBuffer.Overlapped.Event := 0;
 
   LSocket.GetExtensionFunc(FIocpConnectEx, TIOCPSocket.WSAID_CONNECTEX);
   LSocket.GetExtensionFunc(FIocpDisconnectEx, TIOCPSocket.WSAID_DISCONNECTEX);
 end;
 
 procedure THttpClient.DoRun;
+(*
 var
   Param: Cardinal;
 begin
@@ -76,6 +77,15 @@ begin
     Param{FInBuffer.Overlapped.InternalSize}, Pointer(@FInBuffer.Overlapped))) and
     (WSAGetLastError <> ERROR_IO_PENDING) then
     RaiseLastOSError;
+end;  *)
+var
+  LSocket: TIOCPSocket;
+begin
+  LSocket := TIOCPSocket(InObject);
+  LSocket.Connect;
+
+  LSocket.OverlappedWrite(FOutBuffer.Overlapped);
+  LSocket.OverlappedRead(FInBuffer.Overlapped);
 end;
 
 begin

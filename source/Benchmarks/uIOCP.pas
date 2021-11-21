@@ -135,6 +135,7 @@ type
 
     procedure Connect(const AEndpoint: TIOCPEndpoint); overload;
     procedure Connect; overload; inline;
+    procedure Disconnect;
 
     procedure OverlappedWrite(var AOverlapped: TIOCPOverlapped); override;
     procedure OverlappedRead(var AOverlapped: TIOCPOverlapped); override;
@@ -458,6 +459,7 @@ begin
   FHandle := 0;
   if (FHandleOwner) and (LHandle <> 0) and (LHandle <> INVALID_SOCKET) then
   begin
+    shutdown(FHandle, SD_BOTH);
     closesocket(LHandle);
   end;
 
@@ -484,6 +486,12 @@ end;
 procedure TIOCPSocket.Connect;
 begin
   Connect(TIOCPEndpoint.Default);
+end;
+
+procedure TIOCPSocket.Disconnect;
+begin
+  if (shutdown(FHandle, SD_BOTH) <> 0) then
+    RaiseLastOSError;
 end;
 
 procedure TIOCPSocket.OverlappedWrite(var AOverlapped: TIOCPOverlapped);
