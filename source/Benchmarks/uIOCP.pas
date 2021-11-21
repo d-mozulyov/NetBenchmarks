@@ -436,7 +436,7 @@ const
   PROTOCOLS: array[TIOCPProtocol] of Integer = (IPPROTO_TCP, IPPROTO_UDP);
 var
   LHandle: TSocketHandle;
-  LFlag: Cardinal;
+ // LFlag: Cardinal;
 begin
   FProtocol := AProtocol;
 
@@ -446,9 +446,9 @@ begin
 
   inherited Create(AIOCP, LHandle, True);
 
-  LFlag := 0;
-  if ioctlsocket(LHandle, Integer(FIONBIO), LFlag) <> 0 then
-    RaiseLastOSError;
+ // LFlag := 0;
+ // if ioctlsocket(LHandle, Integer(FIONBIO), LFlag) <> 0 then
+ //   RaiseLastOSError;
 end;
 
 destructor TIOCPSocket.Destroy;
@@ -479,7 +479,10 @@ end;
 
 procedure TIOCPSocket.Connect(const AEndpoint: TIOCPEndpoint);
 begin
-  if (Winapi.Winsock2.connect(FHandle, PSockAddr(@AEndpoint.SockAddr)^, SizeOf(AEndpoint.SockAddr)) <> 0) then
+ // if (Winapi.Winsock2.connect(FHandle, PSockAddr(@AEndpoint.SockAddr)^, SizeOf(AEndpoint.SockAddr)) <> 0) then
+  //  RaiseLastOSError;
+  if (WSAConnect(FHandle, PSockAddr(@AEndpoint.SockAddr)^, SizeOf(AEndpoint.SockAddr),
+    nil, nil, nil, nil) <> 0) then
     RaiseLastOSError;
 end;
 
@@ -508,7 +511,6 @@ begin
     PWSAOverlapped(@AOverlapped.Internal), nil) < 0) and (WSAGetLastError <> WSA_IO_PENDING) then
     RaiseLastOSError;
 end;
-
 
 
 { TIOCPClient }

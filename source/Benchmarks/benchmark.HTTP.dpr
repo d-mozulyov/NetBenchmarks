@@ -11,6 +11,7 @@ uses
     {$MESSAGE ERROR 'Platform not yet supported'}
   {$endif}
   uBenchmarks,
+ // System.Net.Socket,
   System.SysUtils;
   
 
@@ -36,13 +37,20 @@ var
 begin
   if TBenchmark.WorkMode then
   begin
-    LBuffer := TBenchmark.WORK_REQUEST_UTF8;
+    LBuffer :=
+      'GET / HTTP/1.1'#13#10 +
+      'Content-Type: application/json'#13#10 +
+      'Content-Length: ' + UTF8String(IntToStr(TBenchmark.WORK_RESPONSE_LENGHT)) + #13#10 +
+      'Host: 127.0.0.1:' + UTF8String(IntToStr(TBenchmark.CLIENT_PORT)) + #13#10 +
+      'Connection: close'#13#10 +
+      TBenchmark.WORK_REQUEST_UTF8;
   end else
   begin
-    LBuffer := 'temp';//TBenchmark.BLANK_REQUEST_UTF8;
+    LBuffer :=
+      'GET / HTTP/1.1'#13#10 +
+       'Host: 127.0.0.1:' + UTF8String(IntToStr(TBenchmark.CLIENT_PORT)) + #13#10 +
+      'Connection: close';
   end;
-
-  // ToDo
 
   SetLength(Result, Length(LBuffer));
   Move(Pointer(LBuffer)^, Pointer(Result)^, Length(LBuffer));
