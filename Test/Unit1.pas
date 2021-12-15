@@ -23,6 +23,8 @@ type
     FTCPClient: TIdTCPClient;
     FIOCPHandle: THandle;
     FSocketHandle: Winapi.Winsock2.TSocket;
+    FMessage: TIdBytes;
+    FWsaBuf: TWsaBuf;
 
     procedure DoServerExecute(AContext: TIdContext);
     function PackMessage: TIdBytes;
@@ -79,6 +81,9 @@ begin
   if (FSocketHandle= INVALID_SOCKET) then
     RaiseLastOSError;
   if (CreateIoCompletionPort(FSocketHandle, FIOCPHandle, 0, System.CPUCount) = 0) then
+    RaiseLastOSError;
+  if (WSAConnect(FSocketHandle, PSockAddr(@LSockAddr)^, SizeOf(LSockAddr),
+    nil, nil, nil, nil) <> 0) then
     RaiseLastOSError;
 end;
 
@@ -139,8 +144,16 @@ begin
 end;
 
 procedure TForm1.btnSendViaIOCPClick(Sender: TObject);
+var
+  LByteCount: Cardinal;
 begin
-//
+  FMessage := PackMessage;
+  FWsaBuf.buf := Pointer(FMessage);
+  FWsaBuf.len := Length(FMessage);
+  LByteCount := FWsaBuf.len;
+  if (WSASend(FSocketHandle, @FWsaBuf, 1, LByteCount, 0,
+    nil, nil) < 0) and (WSAGetLastError <> WSA_IO_PENDING) then
+    RaiseLastOSError;
 end;
 
 
