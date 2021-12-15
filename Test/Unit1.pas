@@ -20,8 +20,10 @@ type
     procedure FormDestroy(Sender: TObject);
   private
     FTCPServer: TIdTCPServer;
+    FTCPClient: TIdTCPClient;
 
     procedure DoServerExecute(AContext: TIdContext);
+    function PackMessage: TIdBytes;
   public
     { Public declarations }
   end;
@@ -43,15 +45,16 @@ begin
   FTCPServer.Bindings.Add.Port := SERVER_PORT;
   FTCPServer.Active := True;
 
+  FTCPClient := TIdTCPClient.Create(nil);
+  FTCPClient.Connect('127.0.0.1', SERVER_PORT);
 
 end;
 
 procedure TForm1.FormDestroy(Sender: TObject);
 begin
 
-
+  FTCPClient.Free;
   FTCPServer.Free;
-//
 end;
 
 procedure TForm1.FormKeyDown(Sender: TObject; var Key: Word;
@@ -67,7 +70,7 @@ var
   LBuffer: TIdBytes;
   LValue: UTF8String;
 begin
-  LSize := AContext.Connection.Socket.ReadUInt32;
+  LSize := AContext.Connection.Socket.ReadUInt32(False);
   if (LSize <> 0) then
   begin
     SetLength(LBuffer, LSize);
@@ -84,26 +87,21 @@ begin
     end);
 end;
 
-procedure TForm1.btnSendViaIndyClick(Sender: TObject);
+function TForm1.PackMessage: TIdBytes;
 var
   LSize: Cardinal;
   LValue: UTF8String;
-  LBuffer: TIdBytes;
-  LClient: TIdTCPClient;
 begin
   LValue := UTF8String(Edit1.Text);
   LSize := Length(LValue);
-  SetLength(LBuffer, LSize);
-  Move(Pointer(LValue)^, Pointer(LBuffer)^, LSize);
+  SetLength(Result, SizeOf(Cardinal) + LSize);
+  PCardinal(Result)^ := LSize;
+  Move(Pointer(LValue)^, Result[SizeOf(Cardinal)], LSize);
+end;
 
-  LClient := TIdTCPClient.Create(nil);
-  try
-    LClient.Connect('127.0.0.1', SERVER_PORT);
-    LClient.IOHandler.Write(LSize);
-    LClient.IOHandler.Write(LBuffer);
-  finally
-    LClient.Free;
-  end;
+procedure TForm1.btnSendViaIndyClick(Sender: TObject);
+begin
+  FTCPClient.IOHandler.Write(PackMessage);
 end;
 
 procedure TForm1.btnSendViaIOCPClick(Sender: TObject);
