@@ -56,6 +56,7 @@ type
     FSocketHandle: Winapi.Winsock2.TSocket;
     FMessage: TIdBytes;
     FWsaBuf: TWsaBuf;
+    FOverlapped: TIOCPOverlapped;
     FInBuffer: TIOCPBuffer;
     FOutBuffer: TIOCPBuffer;
 
@@ -201,7 +202,7 @@ begin
   FInBuffer.Overlapped.InternalBuf.len := FInBuffer.ReservedSize;
 
   FOutBuffer.Overlapped.Callback := Self.OutBufferCallback;
-  FOutBuffer.Overlapped.Event := 1;
+//  FOutBuffer.Overlapped.Event := 1;
   FOutBuffer.Reserve(FInBuffer.ReservedSize);
   FOutBuffer.Overlapped.InternalBuf.buf := Pointer(FOutBuffer.Bytes);
   FOutBuffer.Overlapped.InternalBuf.len := FOutBuffer.Size;
@@ -291,16 +292,21 @@ begin
 end;
 
 procedure TForm1.btnSendViaIOCPClick(Sender: TObject);
+//var
+//  LByteCount: Cardinal;
 begin
   FOutBuffer.WriteBytes(TBytes(PackMessage));
+  //FOutBuffer.Overlapped.InternalBuf.buf := Pointer(FOutBuffer.Bytes);
+  //FOutBuffer.Overlapped.InternalBuf.len := FOutBuffer.Size;
   OverlappedWrite(FOutBuffer.Overlapped);
 
-(*  FWsaBuf.buf := Pointer(FMessage);
+(*  FMessage := PackMessage;
+  FWsaBuf.buf := Pointer(FMessage);
   FWsaBuf.len := Length(FMessage);
   LByteCount := FWsaBuf.len;
   if (WSASend(FSocketHandle, @FWsaBuf, 1, LByteCount, 0,
-    Pointer(@FOutBuffer), nil) < 0) and (WSAGetLastError <> WSA_IO_PENDING) then
-    RaiseLastOSError; *)
+    Pointer(@FOutBuffer.Overlapped), nil) < 0) and (WSAGetLastError <> WSA_IO_PENDING) then
+    RaiseLastOSError;   *)
 end;
 
 
