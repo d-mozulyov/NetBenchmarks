@@ -8,6 +8,37 @@ uses
   IdGlobal, IdContext, IdTCPClient, IdTCPServer, Winapi.Winsock2;
 
 type
+  TIOCPCallback = function(const AParam: Pointer; const AErrorCode: Integer; const ASize: NativeUInt): Boolean of object;
+
+  PIOCPOverlapped = ^TIOCPOverlapped;
+  TIOCPOverlapped = object
+    Internal: TOverlapped;
+    InternalBuf: TWsaBuf;
+    InternalSize: Cardinal;
+    InternalFlags: Cardinal;
+    Callback: TIOCPCallback;
+
+    property Event: THandle read Internal.hEvent write Internal.hEvent;
+    property Ptr: MarshaledAString read InternalBuf.buf write InternalBuf.buf;
+    property Size: u_long read InternalBuf.len write InternalBuf.len;
+  end;
+
+  TIOCPBuffer = object
+  private
+    function OverflowAlloc(const ASize: Integer): Pointer;
+  public
+    Overlapped: TIOCPOverlapped;
+    Bytes: TBytes;
+    ReservedSize: Integer;
+    Size: Integer;
+    Tag: NativeUInt;
+
+    procedure Reserve(const ASize: Integer);
+    function Alloc(const ASize: Integer; const AAppendMode: Boolean = False): Pointer; inline;
+    procedure WriteInteger(const AValue: Integer; const AAppendMode: Boolean = False); inline;
+    procedure WriteBytes(const AValue: TBytes; const AAppendMode: Boolean = False);
+  end;
+
   TForm1 = class(TForm)
     Memo1: TMemo;
     btnSendViaIndy: TButton;
@@ -25,12 +56,19 @@ type
     FSocketHandle: Winapi.Winsock2.TSocket;
     FMessage: TIdBytes;
     FWsaBuf: TWsaBuf;
+    FInBuffer: TIOCPBuffer;
+    FOutBuffer: TIOCPBuffer;
 
     procedure DoServerExecute(AContext: TIdContext);
     function PackMessage: TIdBytes;
+    function InBufferCallback(const AParam: Pointer; const AErrorCode: Integer; const ASize: NativeUInt): Boolean;
+    function OutBufferCallback(const AParam: Pointer; const AErrorCode: Integer; const ASize: NativeUInt): Boolean;
+    procedure OverlappedWrite(var AOverlapped: TIOCPOverlapped);
+    procedure OverlappedRead(var AOverlapped: TIOCPOverlapped);
   public
     { Public declarations }
   end;
+
 
 const
   SERVER_HOST: string = '127.0.0.1';
@@ -43,6 +81,77 @@ var
 implementation
 
 {$R *.dfm}
+
+{ TIOCPBuffer }
+
+function TIOCPBuffer.OverflowAlloc(const ASize: Integer): Pointer;
+var
+  LOffset: Integer;
+begin
+  LOffset := Size - ASize;
+  if (Size > ReservedSize) then
+  begin
+    Reserve(Size);
+  end;
+
+  Result := @Bytes[LOffset];
+end;
+
+procedure TIOCPBuffer.Reserve(const ASize: Integer);
+var
+  LReservedSize: Integer;
+begin
+  if (ASize >= Size) then
+  begin
+    LReservedSize := (ASize + 63) and -64;
+    if (LReservedSize <> ReservedSize) then
+    begin
+      SetLength(Bytes, LReservedSize);
+      ReservedSize := LReservedSize;
+    end;
+  end;
+end;
+
+function TIOCPBuffer.Alloc(const ASize: Integer; const AAppendMode: Boolean): Pointer;
+var
+  LNewSize: Integer;
+begin
+  if (not AAppendMode) then
+  begin
+    LNewSize := ASize;
+    Size := LNewSize;
+    if LNewSize <= ReservedSize then
+    begin
+      Result := Pointer(Bytes);
+      Exit;
+    end;
+  end else
+  begin
+    LNewSize := Size + ASize;
+    Size := LNewSize;
+    if LNewSize <= ReservedSize then
+    begin
+      Result := @Bytes[LNewSize - ASize];
+      Exit;
+    end;
+  end;
+
+  Result := OverflowAlloc(ASize);
+end;
+
+procedure TIOCPBuffer.WriteInteger(const AValue: Integer; const AAppendMode: Boolean);
+begin
+  PInteger(Alloc(SizeOf(Integer), AAppendMode))^ := AValue;
+end;
+
+procedure TIOCPBuffer.WriteBytes(const AValue: TBytes; const AAppendMode: Boolean);
+var
+  LSize: Integer;
+begin
+  LSize := Length(AValue);
+  WriteInteger(LSize, AAppendMode);
+  Move(Pointer(AValue)^, Alloc(LSize)^, LSize);
+end;
 
 procedure TForm1.FormCreate(Sender: TObject);
 var
@@ -85,6 +194,17 @@ begin
   if (WSAConnect(FSocketHandle, PSockAddr(@LSockAddr)^, SizeOf(LSockAddr),
     nil, nil, nil, nil) <> 0) then
     RaiseLastOSError;
+
+  FInBuffer.Overlapped.Callback := Self.InBufferCallback;
+  FInBuffer.Reserve(1024);
+  FInBuffer.Overlapped.InternalBuf.buf := Pointer(FInBuffer.Bytes);
+  FInBuffer.Overlapped.InternalBuf.len := FInBuffer.ReservedSize;
+
+  FOutBuffer.Overlapped.Callback := Self.OutBufferCallback;
+  FOutBuffer.Overlapped.Event := 1;
+  FOutBuffer.Reserve(FInBuffer.ReservedSize);
+  FOutBuffer.Overlapped.InternalBuf.buf := Pointer(FOutBuffer.Bytes);
+  FOutBuffer.Overlapped.InternalBuf.len := FOutBuffer.Size;
 end;
 
 procedure TForm1.FormDestroy(Sender: TObject);
@@ -138,22 +258,49 @@ begin
   Move(Pointer(LValue)^, Result[SizeOf(Cardinal)], LSize);
 end;
 
+function TForm1.InBufferCallback(const AParam: Pointer;
+  const AErrorCode: Integer; const ASize: NativeUInt): Boolean;
+begin
+  Result := True;
+end;
+
+function TForm1.OutBufferCallback(const AParam: Pointer;
+  const AErrorCode: Integer; const ASize: NativeUInt): Boolean;
+begin
+  Result := True;
+end;
+
+procedure TForm1.OverlappedWrite(var AOverlapped: TIOCPOverlapped);
+begin
+  if (WSASend(FSocketHandle, @AOverlapped.InternalBuf, 1, AOverlapped.InternalSize, 0,
+    PWSAOverlapped(@AOverlapped.Internal), nil) < 0) and (WSAGetLastError <> WSA_IO_PENDING) then
+    RaiseLastOSError;
+end;
+
+procedure TForm1.OverlappedRead(var AOverlapped: TIOCPOverlapped);
+begin
+  AOverlapped.InternalFlags := 0;
+  if (WSARecv(FSocketHandle, @AOverlapped.InternalBuf, 1, AOverlapped.InternalSize, AOverlapped.InternalFlags,
+    PWSAOverlapped(@AOverlapped.Internal), nil) < 0) and (WSAGetLastError <> WSA_IO_PENDING) then
+    RaiseLastOSError;
+end;
+
 procedure TForm1.btnSendViaIndyClick(Sender: TObject);
 begin
   FTCPClient.IOHandler.Write(PackMessage);
 end;
 
 procedure TForm1.btnSendViaIOCPClick(Sender: TObject);
-var
-  LByteCount: Cardinal;
 begin
-  FMessage := PackMessage;
-  FWsaBuf.buf := Pointer(FMessage);
+  FOutBuffer.WriteBytes(TBytes(PackMessage));
+  OverlappedWrite(FOutBuffer.Overlapped);
+
+(*  FWsaBuf.buf := Pointer(FMessage);
   FWsaBuf.len := Length(FMessage);
   LByteCount := FWsaBuf.len;
   if (WSASend(FSocketHandle, @FWsaBuf, 1, LByteCount, 0,
-    nil, nil) < 0) and (WSAGetLastError <> WSA_IO_PENDING) then
-    RaiseLastOSError;
+    Pointer(@FOutBuffer), nil) < 0) and (WSAGetLastError <> WSA_IO_PENDING) then
+    RaiseLastOSError; *)
 end;
 
 
