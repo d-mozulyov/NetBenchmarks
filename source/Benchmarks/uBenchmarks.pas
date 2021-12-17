@@ -562,7 +562,7 @@ begin
       if (ACheckMode) then
       begin
         Terminated := (TBenchmark.Clients[0].ResponseCount > 0) or Assigned(Pointer(Error));
-        if (not Terminated) and (Cardinal(Timestamp - LStartTime) >= (1000 * 1)) then
+        if (not Terminated) and (Cardinal(Timestamp - LStartTime) >= (1000 * 1 {$ifdef NOPROCESS}* 60{$endif})) then
         begin
           Terminated := True;
           Error := 'Timeout error';
@@ -593,7 +593,7 @@ end;
 class procedure TBenchmark.Run(const AClientClass: TClientClass; const ADefaultMultiThread: Boolean);
 const
   CLIENT_COUNTS: TArray<Integer> = [1, 100, 10000];
-  WORK_MODES: TArray<Boolean> = [False, True];
+  WORK_MODES: TArray<Boolean> = [{$ifNdef NOPROCESS}False,{$endif} True];
   WORK_MODE_STRS: array[Boolean] of string = ('blank', 'work');
 var
   P: Integer;

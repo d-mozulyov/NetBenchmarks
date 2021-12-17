@@ -53,7 +53,8 @@ end;
 
 procedure TTCPClient.DoRun;
 begin
-  //FSocket.Send(FOutBuffer);
+  OutObject.OverlappedWrite(FOutBuffer);
+  //FSocket.Send();
   //FSocket.Read(FInBuffer);
 end;
 

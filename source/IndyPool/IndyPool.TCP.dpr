@@ -37,15 +37,15 @@ var
   LSize: Cardinal;
   LBuffer: TBytes;
 begin
-  LSize := AContext.Connection.Socket.ReadUInt32;
+  LSize := AContext.Connection.Socket.ReadUInt32(False);
   if (LSize <> 0) then
   begin
     SetLength(LBuffer, LSize);
-    AContext.Connection.Socket.ReadBytes(TIdBytes(LBuffer), LSize);
+    AContext.Connection.Socket.ReadBytes(TIdBytes(LBuffer), LSize, False);
   end;
 
   LSize := Length(BLANK_RESPONSE_BYTES);
-  AContext.Connection.Socket.Write(LSize);
+  AContext.Connection.Socket.Write(LSize, False);
   AContext.Connection.Socket.WriteDirect(TIdBytes(BLANK_RESPONSE_BYTES), LSize);
 end;
 
@@ -54,13 +54,13 @@ var
   LSize: Cardinal;
   LSource, LTarget: TBytes;
 begin
-  LSize := AContext.Connection.Socket.ReadUInt32;
+  LSize := AContext.Connection.Socket.ReadUInt32(False);
   SetLength(LSource, LSize);
-  AContext.Connection.Socket.ReadBytes(TIdBytes(LSource), LSize);
+  AContext.Connection.Socket.ReadBytes(TIdBytes(LSource), LSize, False);
   LTarget := ProcessJson(LSource);
 
   LSize := Length(LTarget);
-  AContext.Connection.Socket.Write(LSize);
+  AContext.Connection.Socket.Write(LSize, False);
   AContext.Connection.Socket.WriteDirect(TIdBytes(LTarget), LSize);
 end;
 

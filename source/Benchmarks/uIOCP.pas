@@ -414,7 +414,9 @@ end;
 
 procedure TIOCPObject.OverlappedWrite(var ABuffer: TIOCPBuffer);
 begin
-  // ToDo
+  ABuffer.Overlapped.InternalBuf.buf := Pointer(ABuffer.Bytes);
+  ABuffer.Overlapped.InternalBuf.len := ABuffer.Size;
+  OverlappedWrite(ABuffer.Overlapped);
 end;
 
 procedure TIOCPObject.OverlappedRead(var ABuffer: TIOCPBuffer);
@@ -550,7 +552,7 @@ begin
   FInBuffer.Overlapped.InternalBuf.len := FInBuffer.ReservedSize;
 
   FOutBuffer.Overlapped.Callback := Self.OutBufferCallback;
-  FOutBuffer.Overlapped.Event := 1;
+ //! FOutBuffer.Overlapped.Event := 1;
   if Assigned(TIOCPClient.FDefaultOutMessage) then
   begin
     FOutBuffer.Bytes := TIOCPClient.FDefaultOutMessage;
