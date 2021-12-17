@@ -17,7 +17,8 @@ type
     class function BenchmarkDefaultOutMessage: TBytes; override;
     procedure DoInit; override;
     procedure DoRun; override;
-//    function DoCheck(const ABuffer: TIOCPBuffer): Boolean; override;
+    function DoGetMessageSize(const ABytes: TBytes; const ASize: Integer): Integer; override;
+    function DoCheckMessage(const ABytes: TBytes; const ASize: Integer): Boolean; override;
   public
 
   end;
@@ -57,10 +58,23 @@ begin
   InObject.OverlappedRead(FInBuffer);
 end;
 
-{function TTCPClient.DoCheck(const ABuffer: TIOCPBuffer): Boolean;
+function TTCPClient.DoGetMessageSize(const ABytes: TBytes;
+  const ASize: Integer): Integer;
 begin
-  Result := True;
-end;}
+  if (ASize < SizeOf(Integer)) then
+  begin
+    Result := SizeOf(Integer);
+  end else
+  begin
+    Result := SizeOf(Integer) + PInteger(ABytes)^;
+  end;
+end;
+
+function TTCPClient.DoCheckMessage(const ABytes: TBytes;
+  const ASize: Integer): Boolean;
+begin
+  Result := TBenchmark.CheckResponse(ABytes, SizeOf(Integer), ASize - SizeOf(Integer));
+end;
 
 
 begin

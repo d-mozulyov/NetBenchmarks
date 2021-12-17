@@ -23,7 +23,7 @@ type
 
 { IOCP routine }
 
-  TIOCPCallback = function(const AParam: Pointer; const AErrorCode: Integer; const ASize: NativeUInt): Boolean of object;
+  TIOCPCallback = procedure(const AParam: Pointer; const AErrorCode: Integer; const ASize: NativeUInt) of object;
 
   PIOCPOverlapped = ^TIOCPOverlapped;
   TIOCPOverlapped = object
@@ -174,8 +174,10 @@ type
     FOutObjectOwner: Boolean;
 
     procedure CleanupObjects; virtual;
-    function InBufferCallback(const AParam: Pointer; const AErrorCode: Integer; const ASize: NativeUInt): Boolean; virtual;
-    function OutBufferCallback(const AParam: Pointer; const AErrorCode: Integer; const ASize: NativeUInt): Boolean; virtual;
+    function DoGetMessageSize(const ABytes: TBytes; const ASize: Integer): Integer; virtual;
+    function DoCheckMessage(const ABytes: TBytes; const ASize: Integer): Boolean; virtual;
+    procedure InBufferCallback(const AParam: Pointer; const AErrorCode: Integer; const ASize: NativeUInt);
+    procedure OutBufferCallback(const AParam: Pointer; const AErrorCode: Integer; const ASize: NativeUInt);
   public
     constructor Create(const AIndex: Integer); override;
     destructor Destroy; override;
@@ -508,10 +510,16 @@ begin
 end;
 
 procedure TIOCPSocket.OverlappedRead(var AOverlapped: TIOCPOverlapped);
+var
+  LWSAOverlapped: PWSAOverlapped;
 begin
+  LWSAOverlapped := nil;
+  if (AOverlapped.Event <> 1) then
+    LWSAOverlapped := PWSAOverlapped(@AOverlapped.Internal);
+
   AOverlapped.InternalFlags := 0;
   if (WSARecv(FHandle, @AOverlapped.InternalBuf, 1, AOverlapped.InternalSize, AOverlapped.InternalFlags,
-    PWSAOverlapped(@AOverlapped.Internal), nil) < 0) and (WSAGetLastError <> WSA_IO_PENDING) then
+    LWSAOverlapped, nil) < 0) and (WSAGetLastError <> WSA_IO_PENDING) then
     RaiseLastOSError;
 end;
 
@@ -614,39 +622,63 @@ begin
   end;
 end;
 
-function TIOCPClient.InBufferCallback(const AParam: Pointer;
-  const AErrorCode: Integer; const ASize: NativeUInt): Boolean;
+function TIOCPClient.DoGetMessageSize(const ABytes: TBytes; const ASize: Integer): Integer;
+begin
+  Result := ASize;
+end;
+
+function TIOCPClient.DoCheckMessage(const ABytes: TBytes; const ASize: Integer): Boolean;
+begin
+  Result := False;
+end;
+
+procedure TIOCPClient.InBufferCallback(const AParam: Pointer;
+  const AErrorCode: Integer; const ASize: NativeUInt);
+var
+  LMessageSize: Integer;
+  LDone: Boolean;
 begin
   if AErrorCode = 0 then
   begin
     Inc(FInBuffer.Size, ASize);
+    LMessageSize := DoGetMessageSize(FInBuffer.Bytes, FInBuffer.Size);
 
-    if (not TBenchmark.CheckMode) {or DoCheck(FInBuffer)} then
+    if LMessageSize <= FInBuffer.Size then
     begin
-      Done;
-      Result := True;
-    end else
-    begin
-      Done(TBenchmark.CHECK_ERROR);
-      Result := True;
+      LDone := (not TBenchmark.CheckMode) or (DoCheckMessage(FInBuffer.Bytes, LMessageSize));
+
+      if LMessageSize <> 0 then
+      begin
+        if LMessageSize = FInBuffer.Size then
+        begin
+          FInBuffer.Size := 0;
+        end else
+        begin
+          Move(FInBuffer.Bytes[FInBuffer.Size], FInBuffer.Bytes[0], FInBuffer.Size - LMessageSize);
+          Dec(FInBuffer.Size, LMessageSize);
+        end;
+      end;
+
+      if LDone then
+      begin
+        Done;
+      end else
+      begin
+        Done(TBenchmark.CHECK_ERROR);
+      end;
     end;
   end else
   begin
     DoneOSError(AErrorCode);
-    Result := False;
   end;
 end;
 
-function TIOCPClient.OutBufferCallback(const AParam: Pointer;
-  const AErrorCode: Integer; const ASize: NativeUInt): Boolean;
+procedure TIOCPClient.OutBufferCallback(const AParam: Pointer;
+  const AErrorCode: Integer; const ASize: NativeUInt);
 begin
-  if AErrorCode = 0 then
-  begin
-    Result := True;
-  end else
+  if AErrorCode <> 0 then
   begin
     DoneOSError(AErrorCode);
-    Result := False;
   end;
 end;
 

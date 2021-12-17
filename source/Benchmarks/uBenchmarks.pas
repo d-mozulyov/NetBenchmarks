@@ -163,6 +163,7 @@ type
       const AClientCount: Integer; const AWorkMode, ACheckMode: Boolean): TStatistics; static;
   public
     class procedure Run(const AClientClass: TClientClass; const ADefaultMultiThread: Boolean = False); static;
+    class function CheckResponse(const ABytes: TBytes; const AOffset, ASize: Integer): Boolean; static;
   end;
 
 
@@ -726,6 +727,39 @@ begin
   {$WARNINGS ON}
 end;
 
+class function TBenchmark.CheckResponse(const ABytes: TBytes; const AOffset, ASize: Integer): Boolean;
+var
+  i: Integer;
+  LStr: string;
+  LValue: TJSONValue;
+begin
+  try
+    if (TBenchmark.WorkMode) then
+    begin
+      LValue := TJSONObject.ParseJSONValue(ABytes, AOffset, ASize);
+      try
+        LStr := LValue.ToString;
+        Result := (LStr = TBenchmark.WORK_RESPONSE);
+      finally
+        LValue.Free;
+      end;
+    end else
+    begin
+      Result := (ASize = TBenchmark.BLANK_RESPONSE_LENGHT);
+      if Result then
+      begin
+        for i := 0 to ASize - 1 do
+        if TBenchmark.BLANK_RESPONSE_BYTES[i] <> ABytes[AOffset + i] then
+        begin
+          Result := False;
+          Break;
+        end;
+      end;
+    end;
+  except
+    Result := False;
+  end;
+end;
 
 initialization
   InitKeyHandler;
