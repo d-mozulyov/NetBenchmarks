@@ -54,8 +54,7 @@ end;
 procedure TTCPClient.DoRun;
 begin
   OutObject.OverlappedWrite(FOutBuffer);
-  //FSocket.Send();
-  //FSocket.Read(FInBuffer);
+  InObject.OverlappedRead(FInBuffer);
 end;
 
 {function TTCPClient.DoCheck(const ABuffer: TIOCPBuffer): Boolean;

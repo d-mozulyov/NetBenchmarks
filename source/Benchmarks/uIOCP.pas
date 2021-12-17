@@ -421,7 +421,9 @@ end;
 
 procedure TIOCPObject.OverlappedRead(var ABuffer: TIOCPBuffer);
 begin
-  // ToDo
+  ABuffer.Overlapped.InternalBuf.buf := Pointer(@ABuffer.Bytes[ABuffer.Size]);
+  ABuffer.Overlapped.InternalBuf.len := ABuffer.ReservedSize - ABuffer.Size;
+  OverlappedRead(ABuffer.Overlapped);
 end;
 
 
@@ -438,7 +440,6 @@ const
   PROTOCOLS: array[TIOCPProtocol] of Integer = (IPPROTO_TCP, IPPROTO_UDP);
 var
   LHandle: TSocketHandle;
- // LFlag: Cardinal;
 begin
   FProtocol := AProtocol;
 
@@ -447,10 +448,6 @@ begin
     RaiseLastOSError;
 
   inherited Create(AIOCP, LHandle, True);
-
- // LFlag := 0;
- // if ioctlsocket(LHandle, Integer(FIONBIO), LFlag) <> 0 then
- //   RaiseLastOSError;
 end;
 
 destructor TIOCPSocket.Destroy;
@@ -481,8 +478,6 @@ end;
 
 procedure TIOCPSocket.Connect(const AEndpoint: TIOCPEndpoint);
 begin
- // if (Winapi.Winsock2.connect(FHandle, PSockAddr(@AEndpoint.SockAddr)^, SizeOf(AEndpoint.SockAddr)) <> 0) then
-  //  RaiseLastOSError;
   if (WSAConnect(FHandle, PSockAddr(@AEndpoint.SockAddr)^, SizeOf(AEndpoint.SockAddr),
     nil, nil, nil, nil) <> 0) then
     RaiseLastOSError;
@@ -500,9 +495,15 @@ begin
 end;
 
 procedure TIOCPSocket.OverlappedWrite(var AOverlapped: TIOCPOverlapped);
+var
+  LWSAOverlapped: PWSAOverlapped;
 begin
+  LWSAOverlapped := nil;
+  if (AOverlapped.Event <> 1) then
+    LWSAOverlapped := PWSAOverlapped(@AOverlapped.Internal);
+
   if (WSASend(FHandle, @AOverlapped.InternalBuf, 1, AOverlapped.InternalSize, 0,
-    PWSAOverlapped(@AOverlapped.Internal), nil) < 0) and (WSAGetLastError <> WSA_IO_PENDING) then
+    LWSAOverlapped, nil) < 0) and (WSAGetLastError <> WSA_IO_PENDING) then
     RaiseLastOSError;
 end;
 
@@ -552,7 +553,7 @@ begin
   FInBuffer.Overlapped.InternalBuf.len := FInBuffer.ReservedSize;
 
   FOutBuffer.Overlapped.Callback := Self.OutBufferCallback;
- //! FOutBuffer.Overlapped.Event := 1;
+  FOutBuffer.Overlapped.Event := 1;
   if Assigned(TIOCPClient.FDefaultOutMessage) then
   begin
     FOutBuffer.Bytes := TIOCPClient.FDefaultOutMessage;
