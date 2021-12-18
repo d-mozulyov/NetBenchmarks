@@ -668,6 +668,11 @@ begin
       end;
     end else
     begin
+      if (LMessageSize > FInBuffer.ReservedSize) then
+      begin
+        FInBuffer.Reserve(LMessageSize);
+      end;
+
       InObject.OverlappedRead(FInBuffer);
     end;
   end else
