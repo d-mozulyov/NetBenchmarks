@@ -736,10 +736,17 @@ begin
   try
     if (TBenchmark.WorkMode) then
     begin
-      LValue := TJSONObject.ParseJSONValue(ABytes, AOffset, ASize);
+      LStr := TEncoding.UTF8.GetString(ABytes, AOffset, ASize);
+      LValue := TJSONObject.ParseJSONValue(LStr);
       try
-        LStr := LValue.ToString;
-        Result := (LStr = TBenchmark.WORK_RESPONSE);
+        if Assigned(LValue) then
+        begin
+          LStr := LValue.ToString;
+          Result := (LStr = TBenchmark.WORK_RESPONSE);
+        end else
+        begin
+          Result := False;
+        end;
       finally
         LValue.Free;
       end;
