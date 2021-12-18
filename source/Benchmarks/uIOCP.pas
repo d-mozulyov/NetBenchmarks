@@ -666,6 +666,9 @@ begin
       begin
         Done(TBenchmark.CHECK_ERROR);
       end;
+    end else
+    begin
+      InObject.OverlappedRead(FInBuffer);
     end;
   end else
   begin
