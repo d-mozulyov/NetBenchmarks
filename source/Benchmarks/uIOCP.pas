@@ -561,7 +561,6 @@ begin
   FInBuffer.Overlapped.InternalBuf.len := FInBuffer.ReservedSize;
 
   FOutBuffer.Overlapped.Callback := Self.OutBufferCallback;
-  FOutBuffer.Overlapped.Event := 1;
   if Assigned(TIOCPClient.FDefaultOutMessage) then
   begin
     FOutBuffer.Bytes := TIOCPClient.FDefaultOutMessage;
